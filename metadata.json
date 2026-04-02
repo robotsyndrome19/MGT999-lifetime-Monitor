@@ -1,0 +1,5 @@
+{
+  "name": "Redline Robot Monitor",
+  "description": "A sophisticated, high-performance monitoring dashboard for industrial robotics, featuring real-time axis telemetry and gripper diagnostics.",
+  "requestFramePermissions": []
+}
