@@ -87,7 +87,7 @@ const generateMockData = (): RobotData => {
 };
 
 // Update this URL to point to the deployed Palletizer Monitor dashboard
-const PALLETIZER_URL = 'https://mgt999-dashboard-monitor-palletizer-dashboard.up.railway.app/';
+const PALLETIZER_URL = 'https://palletizer-mgt-dashboard-monitor.up.railway.app/';
 
 const INITIAL_DATA = generateMockData();
 
