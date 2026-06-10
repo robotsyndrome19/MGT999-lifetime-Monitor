@@ -22,3 +22,18 @@ export interface RobotData {
     [key: string]: CylinderData;
   };
 }
+
+export interface AxisSnapshot {
+  temp: number;
+  torque: number;
+  current: number;
+}
+
+export interface DataSnapshot {
+  timestamp: number;
+  label: string;
+  axes: { [axisId: string]: AxisSnapshot };
+  avgTemp: number;
+  avgTorque: number;
+  avgCurrent: number;
+}

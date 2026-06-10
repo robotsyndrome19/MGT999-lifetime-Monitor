@@ -4,14 +4,16 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { 
-  Activity, 
-  Cpu, 
-  Zap, 
-  Thermometer, 
-  Clock, 
-  CircleDot, 
+import {
+  Activity,
+  Cpu,
+  Zap,
+  Thermometer,
+  Clock,
+  CircleDot,
   ChevronRight,
+  ChevronLeft,
+  ExternalLink,
   Bell,
   User,
   Box,
@@ -24,7 +26,8 @@ import {
   Menu
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { RobotData, RobotAxisData, CylinderData } from './types';
+import { RobotData, RobotAxisData, CylinderData, DataSnapshot } from './types';
+import Analytics from './Analytics';
 
 interface MarkerPosition {
   x: number;
@@ -83,7 +86,32 @@ const generateMockData = (): RobotData => {
   };
 };
 
+// Update this URL to point to the deployed Palletizer Monitor dashboard
+const PALLETIZER_URL = 'https://mgt999-dashboard-monitor-palletizer-dashboard.up.railway.app/';
+
 const INITIAL_DATA = generateMockData();
+
+function createSnapshot(data: RobotData): DataSnapshot {
+  const axisValues = Object.values(data.robot_axis);
+  return {
+    timestamp: Date.now(),
+    label: new Date().toLocaleTimeString('en-US', {
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }),
+    axes: Object.fromEntries(
+      Object.entries(data.robot_axis).map(([id, ax]) => [
+        id,
+        { temp: ax.temp, torque: ax.torque, current: ax.current },
+      ])
+    ),
+    avgTemp: axisValues.reduce((s, a) => s + a.temp, 0) / axisValues.length,
+    avgTorque: axisValues.reduce((s, a) => s + a.torque, 0) / axisValues.length,
+    avgCurrent: axisValues.reduce((s, a) => s + a.current, 0) / axisValues.length,
+  };
+}
 
 function formatLogTimestamp(date = new Date()) {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -140,7 +168,7 @@ function buildDynamicLogs(previousData: RobotData, nextData: RobotData): SystemL
 export default function App() {
   const [data, setData] = useState<RobotData>(INITIAL_DATA);
   const [logs, setLogs] = useState<SystemLogEntry[]>(() => createInitialLogs(INITIAL_DATA));
-  const [activeTab, setActiveTab] = useState<'overview' | 'axes' | 'gripper'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'axes' | 'gripper' | 'analytics'>('overview');
   const [theme, setTheme] = useState<'dark' | 'light'>('light');
   const [activeModal, setActiveModal] = useState<'privacy' | 'logs' | 'support' | null>(null);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -148,6 +176,7 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [activeAxis, setActiveAxis] = useState<string | null>(null);
   const [activeCylinder, setActiveCylinder] = useState<string | null>(null);
+  const [analyticsHistory, setAnalyticsHistory] = useState<DataSnapshot[]>(() => [createSnapshot(INITIAL_DATA)]);
 
   const notifications = [
     { id: 1, type: 'error', message: 'Axis 3: Critical temperature threshold exceeded (52.4°C)', time: '2 mins ago' },
@@ -176,6 +205,7 @@ export default function App() {
         const newData = generateMockData();
         newData.robot_lifetime.runtime = prev.robot_lifetime.runtime + 0.01;
         setLogs(prevLogs => [...buildDynamicLogs(prev, newData), ...prevLogs].slice(0, 10));
+        setAnalyticsHistory(prevHistory => [...prevHistory, createSnapshot(newData)].slice(-60));
         return newData;
       });
     }, 2000);
@@ -210,7 +240,7 @@ export default function App() {
             >
               <Menu className="w-5 h-5" />
             </button>
-            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded flex items-center justify-center shrink-0">
+            <div className="w-12 h-12 sm:w-16 sm:h-16 rounded flex items-center justify-center shrink-0">
               <img
                 src="/dna_logo.png"
                 alt="DNA logo"
@@ -225,7 +255,7 @@ export default function App() {
           </div>
           
           <div className="hidden md:flex items-center gap-8">
-            {(['overview', 'axes', 'gripper'] as const).map((tab) => (
+            {(['overview', 'axes', 'gripper', 'analytics'] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -286,7 +316,7 @@ export default function App() {
                       initial={{ opacity: 0, y: 10, scale: 0.95 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                      className={`absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 rounded-2xl border shadow-2xl z-50 overflow-hidden transition-colors duration-500 ${
+                      className={`absolute right-0 mt-2 w-80 max-w-[calc(100vw-1.5rem)] rounded-2xl border shadow-2xl z-50 overflow-hidden transition-colors duration-500 ${
                         theme === 'dark' ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'
                       }`}
                     >
@@ -377,7 +407,7 @@ export default function App() {
                 </div>
 
                 <div className="space-y-2">
-                  {(['overview', 'axes', 'gripper'] as const).map((tab) => (
+                  {(['overview', 'axes', 'gripper', 'analytics'] as const).map((tab) => (
                     <button
                       key={tab}
                       onClick={() => {
@@ -396,7 +426,39 @@ export default function App() {
                   ))}
                 </div>
 
-                <div className="mt-auto pt-6 border-t border-zinc-800/50">
+                <div className="mt-auto pt-6 border-t border-zinc-800/50 space-y-2">
+                  {/* Back to Home (DNA) */}
+                  <button
+                    onClick={() => {
+                      setIsMobileMenuOpen(false);
+                      window.history.length > 1 ? window.history.back() : (window.location.href = '/');
+                    }}
+                    className={`w-full flex items-center gap-2 py-3 px-4 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-colors ${
+                      theme === 'dark'
+                        ? 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
+                        : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100'
+                    }`}
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5 flex-shrink-0" />
+                    Back to Home (DNA)
+                  </button>
+
+                  {/* Go to Palletizer Monitor Page */}
+                  <a
+                    href={PALLETIZER_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => setIsMobileMenuOpen(false)}
+                    className={`w-full flex items-center gap-2 py-3 px-4 rounded-xl text-[10px] font-bold uppercase tracking-widest border transition-colors ${
+                      theme === 'dark'
+                        ? 'text-red-400 border-red-900/40 bg-red-900/10 hover:bg-red-900/20 hover:border-red-700/50'
+                        : 'text-red-700 border-red-700/25 bg-red-700/[0.07] hover:bg-red-700/[0.13]'
+                    }`}
+                  >
+                    <ExternalLink className="w-3.5 h-3.5 flex-shrink-0" />
+                    Go to Palletizer Monitor Page
+                  </a>
+
                   <div className={`p-4 rounded-xl ${theme === 'dark' ? 'bg-zinc-800/50' : 'bg-zinc-50'}`}>
                     <p className={`text-[10px] uppercase tracking-widest font-bold mb-2 ${theme === 'dark' ? 'text-zinc-500' : 'text-zinc-400'}`}>System Status</p>
                     <div className="flex items-center gap-2">
@@ -411,9 +473,9 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-10 relative z-10">
+      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-10 pb-16 relative z-10">
         {/* Header Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-8 sm:mb-10">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-8 sm:mb-10 min-w-0">
           <motion.div 
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -427,7 +489,7 @@ export default function App() {
               }`}>System Runtime</span>
               <Clock className={theme === 'dark' ? 'text-red-500' : 'text-red-700'} />
             </div>
-            <div className={`text-3xl font-light font-mono transition-colors duration-500 ${
+            <div className={`text-2xl sm:text-3xl font-light font-mono transition-colors duration-500 ${
               theme === 'dark' ? 'text-white' : 'text-zinc-900'
             }`}>
               {data.robot_lifetime.runtime.toFixed(2)} <span className="text-sm text-zinc-500">hrs</span>
@@ -448,7 +510,7 @@ export default function App() {
               }`}>Active Axes</span>
               <Cpu className={theme === 'dark' ? 'text-red-500' : 'text-red-700'} />
             </div>
-            <div className={`text-3xl font-light font-mono transition-colors duration-500 ${
+            <div className={`text-2xl sm:text-3xl font-light font-mono transition-colors duration-500 ${
               theme === 'dark' ? 'text-white' : 'text-zinc-900'
             }`}>
               {String(Object.keys(data.robot_axis).length).padStart(2, '0')} <span className="text-sm text-zinc-500">Online</span>
@@ -469,7 +531,7 @@ export default function App() {
               }`}>System Health</span>
               <Activity className="text-emerald-500" />
             </div>
-            <div className={`text-3xl font-light font-mono transition-colors duration-500 ${
+            <div className={`text-2xl sm:text-3xl font-light font-mono transition-colors duration-500 ${
               theme === 'dark' ? 'text-white' : 'text-zinc-900'
             }`}>
               98.4 <span className="text-sm text-zinc-500">%</span>
@@ -485,10 +547,10 @@ export default function App() {
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 20 }}
-              className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8"
+              className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-6 lg:gap-8"
             >
               {/* Left Column: Status Robot & Controller */}
-              <div className="lg:col-span-3 flex flex-col gap-6">
+              <div className="md:col-span-1 md:order-2 lg:order-none lg:col-span-3 flex flex-col gap-6">
                 <div className={`rounded-2xl border overflow-hidden transition-all duration-500 flex flex-col h-full ${
                   theme === 'dark' ? 'bg-zinc-900/40 border-zinc-800' : 'bg-white border-zinc-200 shadow-sm'
                 }`}>
@@ -518,7 +580,7 @@ export default function App() {
               </div>
 
               {/* Middle Column: Axis Cards */}
-              <div className="lg:col-span-4 flex flex-col gap-4">
+              <div className="md:col-span-1 md:order-3 lg:order-none lg:col-span-4 flex flex-col gap-4">
                 {(Object.entries(data.robot_axis) as [string, RobotAxisData][])
                   .reverse()
                   .map(([id, axis], idx) => (
@@ -537,7 +599,7 @@ export default function App() {
               </div>
 
               {/* Right Column: Robot Arm Image */}
-              <div className="lg:col-span-5 flex items-center justify-center p-4 lg:p-8 relative min-h-[400px]">
+              <div className="md:col-span-2 md:order-1 lg:order-none lg:col-span-5 flex items-center justify-center p-4 lg:p-8 relative min-h-[280px] sm:min-h-[360px] lg:min-h-[400px]">
                 {/* Decorative background circle */}
                 <div className={`absolute inset-0 m-auto w-3/4 aspect-square rounded-full blur-3xl opacity-20 transition-colors duration-1000 ${
                   theme === 'dark' ? 'bg-red-600' : 'bg-red-400'
@@ -580,7 +642,7 @@ export default function App() {
               exit={{ opacity: 0, x: 20 }}
               className="grid grid-cols-1 xl:grid-cols-12 gap-6 lg:gap-8 items-start"
             >
-              <div className="xl:col-span-5 flex items-center justify-center p-4 lg:p-8 relative min-h-[380px] xl:sticky xl:top-24">
+              <div className="xl:col-span-5 flex items-center justify-center p-4 lg:p-8 relative min-h-[280px] sm:min-h-[380px] xl:sticky xl:top-24">
                 <div className={`absolute inset-0 m-auto w-3/4 aspect-square rounded-full blur-3xl opacity-20 transition-colors duration-1000 ${
                   theme === 'dark' ? 'bg-red-600' : 'bg-red-400'
                 }`} />
@@ -629,16 +691,27 @@ export default function App() {
             </motion.div>
           )}
 
+          {activeTab === 'analytics' && (
+            <motion.div
+              key="analytics"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+            >
+              <Analytics data={data} history={analyticsHistory} theme={theme} />
+            </motion.div>
+          )}
+
           {activeTab === 'gripper' && (
             <motion.div
               key="gripper"
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 20 }}
-              className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-center"
+              className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12 items-start lg:items-center"
             >
               {/* Left Column: Gripper Image */}
-              <div className="flex items-center justify-center p-4 relative min-h-[300px] lg:min-h-[500px]">
+              <div className="flex items-center justify-center p-4 relative min-h-[280px] md:min-h-[380px] lg:min-h-[500px]">
                 <div className={`absolute inset-0 m-auto w-2/3 aspect-square rounded-full blur-3xl opacity-20 transition-colors duration-1000 ${
                   theme === 'dark' ? 'bg-red-600' : 'bg-red-400'
                 }`} />
@@ -700,8 +773,8 @@ export default function App() {
                           {id}
                         </span>
                       </div>
-                      <div className="flex items-center gap-4">
-                        <div className="w-24 sm:w-32 h-2 rounded-full overflow-hidden bg-zinc-200 dark:bg-zinc-800">
+                      <div className="flex items-center gap-2 sm:gap-4">
+                        <div className="w-20 sm:w-32 h-2 rounded-full overflow-hidden bg-zinc-200 dark:bg-zinc-800">
                           <motion.div 
                             initial={{ width: 0 }}
                             animate={{ width: `${Math.min((cylinder.lifetime_act / cylinder.limit_lifetime) * 100, 100)}%` }}
@@ -726,29 +799,29 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className={`border-t py-10 transition-all duration-500 ${
+      <footer className={`border-t pb-14 transition-all duration-500 ${
         theme === 'dark' ? 'border-red-900/10 bg-black/40' : 'border-red-100 bg-zinc-50'
       }`}>
-        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
+        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6 py-8">
           <div className={`text-xs uppercase tracking-[0.2em] transition-colors duration-500 ${
             theme === 'dark' ? 'text-zinc-600' : 'text-zinc-400'
           }`}>
             © 2026 Redline Industrial Systems. All rights reserved.
           </div>
           <div className="flex flex-col sm:flex-row gap-4 sm:gap-8 text-[10px] uppercase tracking-widest transition-colors duration-500">
-            <button 
+            <button
               onClick={() => setActiveModal('privacy')}
               className={`transition-colors text-left ${theme === 'dark' ? 'text-zinc-500 hover:text-red-500' : 'text-zinc-400 hover:text-red-700'}`}
             >
               Privacy Policy
             </button>
-            <button 
+            <button
               onClick={() => setActiveModal('logs')}
               className={`transition-colors text-left ${theme === 'dark' ? 'text-zinc-500 hover:text-red-500' : 'text-zinc-400 hover:text-red-700'}`}
             >
               System Logs
             </button>
-            <button 
+            <button
               onClick={() => setActiveModal('support')}
               className={`transition-colors text-left ${theme === 'dark' ? 'text-zinc-500 hover:text-red-500' : 'text-zinc-400 hover:text-red-700'}`}
             >
@@ -757,6 +830,43 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Sticky navigation bar — always visible at the bottom of the viewport */}
+      <div className={`fixed bottom-0 left-0 right-0 z-40 border-t backdrop-blur-xl transition-all duration-500 ${
+        theme === 'dark' ? 'border-red-900/20 bg-black/80' : 'border-red-100 bg-white/90'
+      }`}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-12 flex items-center gap-2 overflow-hidden">
+          {/* Back to Home (DNA) */}
+          <button
+            onClick={() => window.history.length > 1 ? window.history.back() : (window.location.href = '/')}
+            className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest py-1.5 px-2 sm:px-3 rounded-lg transition-colors shrink-0 min-h-[36px] ${
+              theme === 'dark'
+                ? 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
+                : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-200/60'
+            }`}
+          >
+            <ChevronLeft className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="hidden xs:inline">Back to Home (DNA)</span>
+            <span className="xs:hidden">Home</span>
+          </button>
+
+          {/* Go to Palletizer Monitor Page */}
+          <a
+            href={PALLETIZER_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest py-1.5 px-2 sm:px-3 rounded-lg border transition-colors shrink-0 min-h-[36px] ${
+              theme === 'dark'
+                ? 'text-red-400 border-red-900/40 bg-red-900/10 hover:bg-red-900/20 hover:border-red-700/50 hover:text-red-300'
+                : 'text-red-700 border-red-700/25 bg-red-700/[0.07] hover:bg-red-700/[0.13] hover:border-red-700/40'
+            }`}
+          >
+            <ExternalLink className="w-3.5 h-3.5 flex-shrink-0" />
+            <span className="hidden sm:inline">Go to Palletizer Monitor</span>
+            <span className="sm:hidden">Palletizer</span>
+          </a>
+        </div>
+      </div>
 
       {/* Modals */}
       <AnimatePresence>
@@ -1007,18 +1117,18 @@ function AxisCard({ id, data, index, theme, compact = false, isActive = false, o
         }`}>
           {id}
         </div>
-        <div className="p-3 grid grid-cols-3 gap-2 divide-x divide-zinc-500/20">
-          <div className="text-center">
-            <div className="text-[9px] uppercase tracking-widest text-zinc-500 mb-1">Temp</div>
-            <div className={`text-xs font-mono ${theme === 'dark' ? 'text-zinc-300' : 'text-zinc-700'}`}>{data.temp.toFixed(1)}°C</div>
+        <div className="p-3 grid grid-cols-3 gap-1 divide-x divide-zinc-500/20">
+          <div className="text-center px-1">
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Temp</div>
+            <div className={`text-xs font-mono leading-tight ${theme === 'dark' ? 'text-zinc-300' : 'text-zinc-700'}`}>{data.temp.toFixed(1)}°C</div>
           </div>
-          <div className="text-center">
-            <div className="text-[9px] uppercase tracking-widest text-zinc-500 mb-1">Torque</div>
-            <div className={`text-xs font-mono ${theme === 'dark' ? 'text-zinc-300' : 'text-zinc-700'}`}>{data.torque.toFixed(1)}%</div>
+          <div className="text-center px-1">
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Torque</div>
+            <div className={`text-xs font-mono leading-tight ${theme === 'dark' ? 'text-zinc-300' : 'text-zinc-700'}`}>{data.torque.toFixed(1)}%</div>
           </div>
-          <div className="text-center">
-            <div className="text-[9px] uppercase tracking-widest text-zinc-500 mb-1">Current</div>
-            <div className={`text-xs font-mono ${theme === 'dark' ? 'text-zinc-300' : 'text-zinc-700'}`}>{data.current.toFixed(2)}A</div>
+          <div className="text-center px-1">
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Current</div>
+            <div className={`text-xs font-mono leading-tight ${theme === 'dark' ? 'text-zinc-300' : 'text-zinc-700'}`}>{data.current.toFixed(2)}A</div>
           </div>
         </div>
       </motion.div>

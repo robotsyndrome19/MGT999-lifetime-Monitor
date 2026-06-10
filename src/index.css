@@ -46,7 +46,20 @@ body,
 }
 
 html {
-  font-size: 17px;
+  font-size: 106.25%; /* ~17px at default 16px browser font; scales with user accessibility/zoom settings */
+  scroll-behavior: smooth;
+}
+
+body {
+  overflow-x: hidden;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+:focus-visible {
+  outline: 2px solid #ef4444;
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 button,
