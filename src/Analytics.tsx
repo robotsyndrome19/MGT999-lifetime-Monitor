@@ -2,17 +2,20 @@
  * Analytics page — live telemetry charts for robot axes and gripper cylinders.
  * Receives a rolling `history` buffer (last 60 snapshots at 2 s cadence = 2 min window)
  * and the latest `data` snapshot so KPI cards always show the freshest values.
+ *
+ * Visual language follows the REDLINE MONITOR design:
+ *   · light theme primary (full dark-mode support retained via `theme` prop)
+ *   · two-tone section headers — accent word in red, rest in foreground
+ *   · bar charts for per-axis temperature / torque / current
+ *   · a real-time overview bar chart across the history window
+ *   · colored legend badges top-right of each panel
  */
 
-import React from 'react';
 import {
-  LineChart,
-  Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
   PieChart,
   Pie,
@@ -21,11 +24,15 @@ import {
   Bar,
   TooltipProps,
 } from 'recharts';
-import { Thermometer, Zap, CircleDot, Clock, TrendingUp, BarChart2 } from 'lucide-react';
+import { Thermometer, Zap, CircleDot, Clock } from 'lucide-react';
 import { motion } from 'motion/react';
 import { RobotData, DataSnapshot } from './types';
 
-// ─── constants ──────────────────────────────────────────────────────────────
+// ─── constants ───────────────────────────────────────────────────────────────
+
+const RED = '#dc2626';
+
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
 
 const AXIS_COLORS: Record<string, string> = {
   'Axis 1': '#ef4444',
@@ -37,7 +44,7 @@ const AXIS_COLORS: Record<string, string> = {
 
 const HEALTH_THRESHOLDS = { warning: 45, critical: 48 } as const;
 
-// ─── types ──────────────────────────────────────────────────────────────────
+// ─── types ───────────────────────────────────────────────────────────────────
 
 interface AnalyticsProps {
   data: RobotData;
@@ -45,16 +52,17 @@ interface AnalyticsProps {
   theme: 'dark' | 'light';
 }
 
-// recharts custom tooltip payload shape
-interface TooltipEntry {
-  dataKey: string;
-  value: number;
-  color: string;
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+function formatAxisLabel(id: string): string {
+  const m = id.match(/(\d+)/);
+  if (m) return `AXIS_${m[1].padStart(2, '0')}`;
+  return id.toUpperCase().replace(/\s+/g, '_');
 }
 
-// ─── sub-components ─────────────────────────────────────────────────────────
+// ─── sub-components ──────────────────────────────────────────────────────────
 
-function ChartTooltip({
+function BarTooltip({
   active,
   payload,
   label,
@@ -62,63 +70,227 @@ function ChartTooltip({
   isDark,
 }: TooltipProps<number, string> & { unit?: string; isDark: boolean }) {
   if (!active || !payload?.length) return null;
-
+  const v = payload[0].value;
   return (
     <div
-      className={`rounded-xl border px-3 py-2.5 text-xs shadow-2xl min-w-[120px] ${
-        isDark
-          ? 'bg-zinc-900 border-zinc-700 text-zinc-300'
-          : 'bg-white border-zinc-200 text-zinc-700'
+      className={`rounded-xl border px-3 py-2 text-xs shadow-2xl min-w-[96px] ${
+        isDark ? 'bg-zinc-900 border-zinc-700' : 'bg-white border-zinc-200'
       }`}
     >
-      <p className={`font-mono mb-2 text-[10px] uppercase tracking-widest ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+      <p
+        className={`font-mono mb-1 text-[10px] uppercase tracking-widest ${
+          isDark ? 'text-zinc-500' : 'text-zinc-400'
+        }`}
+      >
         {label}
       </p>
-      {(payload as TooltipEntry[]).map((p) => (
-        <div key={p.dataKey} className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-1.5">
-            <span
-              className="w-1.5 h-1.5 rounded-full inline-block flex-shrink-0"
-              style={{ background: p.color }}
-            />
-            <span className={`text-[10px] ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>{p.dataKey}</span>
-          </div>
-          <span className="font-mono font-semibold tabular-nums">
-            {typeof p.value === 'number' ? p.value.toFixed(1) : p.value}
-            {unit}
-          </span>
-        </div>
-      ))}
+      <p
+        className={`font-mono font-semibold tabular-nums ${
+          isDark ? 'text-white' : 'text-zinc-900'
+        }`}
+      >
+        {typeof v === 'number' ? v.toFixed(1) : v}
+        {unit}
+      </p>
     </div>
   );
 }
 
-function SectionHeader({
-  title,
-  sub,
-  icon,
+function AxisCategoryTick({
+  x = 0,
+  y = 0,
+  payload,
+  highlight,
   isDark,
 }: {
-  title: string;
+  x?: number;
+  y?: number;
+  payload?: { value: string };
+  highlight: string;
+  isDark: boolean;
+}) {
+  const value = payload?.value ?? '';
+  const hi = value === highlight;
+  return (
+    <text
+      x={x}
+      y={y + 12}
+      textAnchor="middle"
+      fontFamily="ui-monospace, SFMono-Regular, monospace"
+      fontSize={10}
+      fontWeight={hi ? 700 : 400}
+      fill={hi ? RED : isDark ? '#a1a1aa' : '#71717a'}
+    >
+      {value}
+    </text>
+  );
+}
+
+function SectionHeader({
+  accent,
+  rest,
+  sub,
+  legend,
+  isDark,
+}: {
+  accent: string;
+  rest?: string;
   sub: string;
-  icon: React.ReactNode;
+  legend?: { label: string; color: string };
   isDark: boolean;
 }) {
   return (
     <div className="flex items-start justify-between mb-5">
       <div>
-        <h3
-          className={`text-xs font-bold uppercase tracking-widest ${
-            isDark ? 'text-white' : 'text-zinc-900'
+        <h3 className="text-xs font-bold uppercase tracking-widest">
+          <span className="text-red-600">{accent}</span>
+          {rest ? (
+            <span className={isDark ? ' text-white' : ' text-zinc-900'}>
+              {` ${rest}`}
+            </span>
+          ) : null}
+        </h3>
+        <p
+          className={`text-[10px] mt-0.5 uppercase tracking-widest ${
+            isDark ? 'text-zinc-600' : 'text-zinc-400'
           }`}
         >
-          {title}
-        </h3>
-        <p className={`text-[10px] mt-0.5 uppercase tracking-widest ${isDark ? 'text-zinc-600' : 'text-zinc-400'}`}>
           {sub}
         </p>
       </div>
-      <div className={isDark ? 'text-zinc-700' : 'text-zinc-300'}>{icon}</div>
+      {legend && (
+        <div className="flex items-center gap-1.5 flex-shrink-0 pt-0.5">
+          <span
+            className="w-2.5 h-2.5 rounded-[2px] inline-block"
+            style={{ background: legend.color }}
+          />
+          <span
+            className={`text-[10px] font-semibold uppercase tracking-widest ${
+              isDark ? 'text-zinc-400' : 'text-zinc-500'
+            }`}
+          >
+            {legend.label}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EmptyState({ isDark, message }: { isDark: boolean; message: string }) {
+  return (
+    <div
+      className={`flex items-center justify-center h-40 text-xs uppercase tracking-widest ${
+        isDark ? 'text-zinc-700' : 'text-zinc-400'
+      }`}
+    >
+      <span className="animate-pulse">{message}</span>
+    </div>
+  );
+}
+
+// ─── Semi-circle SVG Gauge ───────────────────────────────────────────────────
+// Arc from 9 o'clock → 12 o'clock → 3 o'clock (sweep=1 = clockwise in SVG).
+
+function SemiGauge({ pct, color }: { pct: number; color: string }) {
+  const r = 52;
+  const cx = 80;
+  const cy = 74;
+  const sw = 13;
+
+  const bgD = `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`;
+
+  const theta = Math.PI * (1 - Math.min(pct, 100) / 100);
+  const endX = cx + r * Math.cos(theta);
+  const endY = cy - r * Math.sin(theta);
+  const fgD =
+    pct <= 0
+      ? ''
+      : pct >= 100
+        ? bgD
+        : `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${endX} ${endY}`;
+
+  return (
+    <svg viewBox="0 0 160 84" className="w-full">
+      <path d={bgD} fill="none" stroke="#e5e7eb" strokeWidth={sw} strokeLinecap="round" />
+      {pct > 0 && (
+        <path d={fgD} fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" />
+      )}
+      <text
+        x={cx}
+        y={cy - 8}
+        textAnchor="middle"
+        fontSize="20"
+        fontWeight="700"
+        fill="#111827"
+        fontFamily="ui-monospace, monospace"
+      >
+        {pct}%
+      </text>
+    </svg>
+  );
+}
+
+// ─── Horizontal Temperature Bar ──────────────────────────────────────────────
+
+const TEMP_SCALE = 100;
+
+function cylinderLabel(id: string): string {
+  return id
+    .replace(' cylinder', '')
+    .replace(' left', ' L')
+    .replace(' right', ' R')
+    .toUpperCase();
+}
+
+function TempBar({ label, current, avg }: { label: string; current: number; avg: number }) {
+  const fillPct = Math.min(100, Math.max(0, (current / TEMP_SCALE) * 100));
+  const avgPct = Math.min(100, Math.max(0, (avg / TEMP_SCALE) * 100));
+
+  return (
+    <div className="flex items-start gap-3">
+      <span className="w-12 pt-3 text-[9px] font-bold uppercase tracking-widest text-zinc-500 flex-shrink-0 text-right">
+        {label.toUpperCase()}
+      </span>
+      <div className="flex-1 min-w-0">
+        {/* Floating labels */}
+        <div className="relative h-4 select-none">
+          <span className="absolute left-0 text-[8.5px] font-semibold uppercase tracking-widest text-zinc-400 leading-none">
+            MIN
+          </span>
+          <span
+            className="absolute text-[8.5px] font-semibold uppercase tracking-widest text-emerald-500 leading-none"
+            style={{ left: `${avgPct}%`, transform: 'translateX(-50%)' }}
+          >
+            AVG
+          </span>
+          <span className="absolute right-0 text-[8.5px] font-semibold uppercase tracking-widest text-zinc-400 leading-none">
+            MAX
+          </span>
+        </div>
+        {/* Bar */}
+        <div className="relative h-3 rounded-full bg-zinc-200">
+          <div
+            className="absolute left-0 top-0 h-full rounded-full bg-red-600 transition-all duration-700"
+            style={{ width: `${fillPct}%` }}
+          />
+          <div
+            className="absolute top-0 h-full w-[2px] bg-emerald-500 z-10 -translate-x-px"
+            style={{ left: `${avgPct}%` }}
+          />
+        </div>
+        {/* Scale — avg value floats at avg position */}
+        <div className="relative mt-[2px]">
+          <span className="text-[7.5px] text-zinc-400">0</span>
+          <span
+            className="absolute text-[7.5px] text-emerald-500 -translate-x-1/2"
+            style={{ left: `${avgPct}%` }}
+          >
+            {Math.round(avg)}
+          </span>
+          <span className="absolute right-0 text-[7.5px] text-zinc-400">100</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -140,7 +312,46 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
   const peakTorque = Math.max(...axisValues.map((a) => a.torque));
   const peakCurrent = Math.max(...axisValues.map((a) => a.current));
 
-  // Health distribution
+  const pickMaxId = (key: 'temp' | 'torque' | 'current') => {
+    let id = '';
+    let mx = -Infinity;
+    axisEntries.forEach(([k, a]) => {
+      if (a[key] > mx) { mx = a[key]; id = k; }
+    });
+    return formatAxisLabel(id);
+  };
+  const hotTempLabel = pickMaxId('temp');
+  const hotTorqueLabel = pickMaxId('torque');
+  const hotCurrentLabel = pickMaxId('current');
+
+  const tempBarData = axisEntries.map(([id, a]) => ({
+    label: formatAxisLabel(id),
+    value: parseFloat(a.temp.toFixed(1)),
+  }));
+  const torqueBarData = axisEntries.map(([id, a]) => ({
+    label: formatAxisLabel(id),
+    value: parseFloat(a.torque.toFixed(1)),
+  }));
+  const currentBarData = axisEntries.map(([id, a]) => ({
+    label: formatAxisLabel(id),
+    value: parseFloat(a.current.toFixed(2)),
+  }));
+
+  const overviewData = WEEKDAYS.map((day, i) => {
+    if (history.length === 0) return { label: day, value: 0 };
+    const start = Math.floor((i * history.length) / 7);
+    const end = Math.max(start + 1, Math.floor(((i + 1) * history.length) / 7));
+    const temps: number[] = [];
+    history.slice(start, end).forEach((snap) => {
+      axisIds.forEach((id) => {
+        const t = snap.axes[id]?.temp;
+        if (typeof t === 'number') temps.push(t);
+      });
+    });
+    const avg = temps.length ? temps.reduce((s, v) => s + v, 0) / temps.length : 0;
+    return { label: day, value: parseFloat(avg.toFixed(1)) };
+  });
+
   const healthCounts = axisValues.reduce(
     (acc, a) => {
       if (a.temp >= HEALTH_THRESHOLDS.critical) acc.critical++;
@@ -148,7 +359,7 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
       else acc.normal++;
       return acc;
     },
-    { normal: 0, warning: 0, critical: 0 }
+    { normal: 0, warning: 0, critical: 0 },
   );
 
   const pieData = [
@@ -157,16 +368,16 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
     { name: 'Critical', value: healthCounts.critical, color: '#ef4444' },
   ].filter((d) => d.value > 0);
 
-  // Gripper cylinder bar data
   const cylinderBarData = Object.entries(data.gripper).map(([id, c]) => ({
     name: id.replace(' cylinder', ''),
     usage: Math.round((c.lifetime_act / c.limit_lifetime) * 100),
     fill: c.lifetime_act / c.limit_lifetime > 0.8 ? '#ef4444' : '#10b981',
   }));
 
-  // Per-axis stats over history window
   const axisStats = axisEntries.map(([id, a]) => {
-    const temps = history.map((s) => s.axes[id]?.temp).filter((v): v is number => v !== undefined);
+    const temps = history
+      .map((s) => s.axes[id]?.temp)
+      .filter((v): v is number => v !== undefined);
     return {
       id,
       color: AXIS_COLORS[id] ?? '#6b7280',
@@ -177,85 +388,92 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
     };
   });
 
-  // History series for line charts — reshape into recharts row objects
-  const tempSeries = history.map((snap) => {
-    const row: Record<string, number | string> = { label: snap.label };
-    axisIds.forEach((id) => {
-      row[id] = parseFloat((snap.axes[id]?.temp ?? 0).toFixed(1));
-    });
-    return row;
+  // Per-axis stats for TempBar (used in Figma section)
+  const axisBarStats = axisEntries.map(([id, a]) => {
+    const temps = history
+      .map((s) => s.axes[id]?.temp)
+      .filter((v): v is number => v !== undefined);
+    return {
+      id,
+      current: a.temp,
+      avg: temps.length ? temps.reduce((s, v) => s + v, 0) / temps.length : a.temp,
+    };
   });
 
-  const torqueSeries = history.map((snap) => {
-    const row: Record<string, number | string> = { label: snap.label };
-    axisIds.forEach((id) => {
-      row[id] = parseFloat((snap.axes[id]?.torque ?? 0).toFixed(1));
-    });
-    return row;
-  });
-
-  const currentSeries = history.map((snap) => {
-    const row: Record<string, number | string> = { label: snap.label };
-    axisIds.forEach((id) => {
-      row[id] = parseFloat((snap.axes[id]?.current ?? 0).toFixed(2));
-    });
-    return row;
-  });
+  // Gripper
+  const cylinderEntries = Object.entries(data.gripper);
+  const openCount = cylinderEntries.filter(([, c]) => c.reed_open).length;
 
   // ── theme tokens ──────────────────────────────────────────────────────────
-  const grid = isDark ? '#27272a' : '#e4e4e7';
+  const grid = isDark ? '#27272a' : '#eef0f2';
   const tick = isDark ? '#71717a' : '#a1a1aa';
-  const card = `rounded-2xl border backdrop-blur-sm transition-colors duration-500 ${
+  const torqueFill = isDark ? '#d4d4d8' : '#3f3f46';
+  const currentFill = isDark ? '#a1a1aa' : '#9ca3af';
+
+  const card = `rounded-2xl border transition-colors duration-500 ${
     isDark ? 'bg-zinc-900/40 border-red-900/10' : 'bg-white border-zinc-200 shadow-sm'
+  }`;
+  const heroCard = `rounded-2xl border transition-colors duration-500 ${
+    isDark
+      ? 'bg-zinc-900/40 border-red-900/20'
+      : 'bg-gradient-to-br from-rose-50 via-white to-white border-zinc-200 shadow-sm'
   }`;
   const labelCls = `text-[10px] font-semibold uppercase tracking-widest ${
     isDark ? 'text-zinc-500' : 'text-zinc-400'
   }`;
-  const valueCls = `text-2xl sm:text-3xl font-light font-mono mt-2 min-w-0 truncate ${isDark ? 'text-white' : 'text-zinc-900'}`;
-  const subCls = `text-[10px] mt-1.5 uppercase tracking-widest ${isDark ? 'text-zinc-600' : 'text-zinc-400'}`;
+  const valueCls = `text-2xl sm:text-3xl font-light font-mono mt-2 min-w-0 truncate ${
+    isDark ? 'text-white' : 'text-zinc-900'
+  }`;
+  const subCls = `text-[10px] mt-1.5 uppercase tracking-widest ${
+    isDark ? 'text-zinc-600' : 'text-zinc-400'
+  }`;
 
-  // shared XAxis / YAxis tick props
   const tickProps = { fill: tick, fontSize: 10 };
+  const tooltipCursor = {
+    fill: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+  };
 
   return (
     <div className="space-y-5 pb-4">
       {/* ── KPI strip ──────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {([
-          {
-            label: 'Avg Temperature',
-            value: avgTemp.toFixed(1),
-            unit: '°C',
-            sub: `Peak ${peakTemp.toFixed(1)} °C`,
-            warn: peakTemp >= HEALTH_THRESHOLDS.critical,
-            icon: <Thermometer size={18} className={isDark ? 'text-red-500' : 'text-red-700'} />,
-            delay: 0,
-          },
-          {
-            label: 'Avg Torque',
-            value: avgTorque.toFixed(1),
-            unit: '%',
-            sub: `Peak ${peakTorque.toFixed(1)} %`,
-            icon: <Zap size={18} className={isDark ? 'text-amber-500' : 'text-amber-600'} />,
-            delay: 0.05,
-          },
-          {
-            label: 'Avg Current',
-            value: avgCurrent.toFixed(2),
-            unit: 'A',
-            sub: `Peak ${peakCurrent.toFixed(2)} A`,
-            icon: <CircleDot size={18} className={isDark ? 'text-blue-500' : 'text-blue-600'} />,
-            delay: 0.1,
-          },
-          {
-            label: 'System Runtime',
-            value: data.robot_lifetime.runtime.toFixed(2),
-            unit: 'hrs',
-            sub: `${history.length} samples collected`,
-            icon: <Clock size={18} className={isDark ? 'text-emerald-500' : 'text-emerald-600'} />,
-            delay: 0.15,
-          },
-        ] as const).map((kpi) => (
+        {(
+          [
+            {
+              label: 'Avg Temperature',
+              value: avgTemp.toFixed(1),
+              unit: '°C',
+              sub: `Peak ${peakTemp.toFixed(1)} °C`,
+              warn: peakTemp >= HEALTH_THRESHOLDS.critical,
+              icon: <Thermometer size={18} className={isDark ? 'text-red-500' : 'text-red-600'} />,
+              delay: 0,
+            },
+            {
+              label: 'Avg Torque',
+              value: avgTorque.toFixed(1),
+              unit: '%',
+              sub: `Peak ${peakTorque.toFixed(1)} %`,
+              icon: <Zap size={18} className={isDark ? 'text-amber-500' : 'text-amber-600'} />,
+              delay: 0.05,
+            },
+            {
+              label: 'Avg Current',
+              value: avgCurrent.toFixed(2),
+              unit: 'A',
+              sub: `Peak ${peakCurrent.toFixed(2)} A`,
+              icon: <CircleDot size={18} className={isDark ? 'text-blue-500' : 'text-blue-600'} />,
+              delay: 0.1,
+            },
+            {
+              label: 'System Runtime',
+              value: data.robot_lifetime.runtime.toFixed(2),
+              unit: 'hrs',
+              sub: `${history.length} samples collected`,
+              icon: <Clock size={18} className={isDark ? 'text-emerald-500' : 'text-emerald-600'} />,
+              delay: 0.15,
+            },
+          ] as const
+        ).map((kpi) => (
           <motion.div
             key={kpi.label}
             initial={{ opacity: 0, y: 16 }}
@@ -271,39 +489,92 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
               {kpi.value}
               <span className="text-sm text-zinc-500 ml-1">{kpi.unit}</span>
             </div>
-            <p className={`${subCls} ${'warn' in kpi && kpi.warn ? 'text-amber-500' : ''}`}>{kpi.sub}</p>
+            <p className={`${subCls} ${'warn' in kpi && kpi.warn ? 'text-amber-500' : ''}`}>
+              {kpi.sub}
+            </p>
           </motion.div>
         ))}
       </div>
 
-      {/* ── Temperature trend (2/3) + Health donut (1/3) ─────────────────── */}
+      {/* ── Overview real-time (hero) ───────────────────────────────────────── */}
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
-        className="grid grid-cols-1 lg:grid-cols-3 gap-4"
+        className={`${heroCard} p-5`}
       >
-        {/* Temperature line chart */}
-        <div className={`${card} p-5 lg:col-span-2`}>
-          <SectionHeader
-            title="Temperature Trend"
-            sub="Live axis temps · °C · last 2 min"
-            icon={<TrendingUp size={16} />}
-            isDark={isDark}
-          />
-          {history.length < 2 ? (
-            <EmptyState isDark={isDark} message="Collecting data…" />
-          ) : (
-            <div className="w-full aspect-[5/2] min-h-[150px] max-h-[260px]">
+        <SectionHeader
+          accent="Overview"
+          rest="Real-Time"
+          sub="Mean axis temperature · °C · by day"
+          legend={{ label: 'Temp', color: RED }}
+          isDark={isDark}
+        />
+        {history.length === 0 ? (
+          <EmptyState isDark={isDark} message="Collecting data…" />
+        ) : (
+          <div className="w-full aspect-[16/5] min-h-[180px] max-h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={tempSeries} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={grid} />
+              <BarChart
+                data={overviewData}
+                margin={{ top: 4, right: 8, left: -18, bottom: 0 }}
+                barCategoryGap="22%"
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke={grid} vertical={false} />
                 <XAxis
                   dataKey="label"
                   tick={tickProps}
                   tickLine={false}
                   axisLine={{ stroke: grid }}
-                  interval="preserveStartEnd"
+                  interval={0}
+                />
+                <YAxis tick={tickProps} tickLine={false} axisLine={false} unit="°" />
+                <Tooltip
+                  cursor={tooltipCursor}
+                  content={(p) => <BarTooltip {...(p as TooltipProps<number, string>)} unit="°C" isDark={isDark} />}
+                />
+                <Bar
+                  dataKey="value"
+                  fill={RED}
+                  radius={[3, 3, 0, 0]}
+                  maxBarSize={42}
+                  isAnimationActive={false}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </motion.div>
+
+      {/* ── Temperature trend (2/3) + Health donut (1/3) ─────────────────── */}
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.25 }}
+        className="grid grid-cols-1 lg:grid-cols-3 gap-4"
+      >
+        <div className={`${card} p-5 lg:col-span-2`}>
+          <SectionHeader
+            accent="Temperature"
+            rest="Trend"
+            sub="Live axis temps · °C"
+            legend={{ label: 'Temp', color: RED }}
+            isDark={isDark}
+          />
+          <div className="w-full aspect-[5/2] min-h-[150px] max-h-[260px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={tempBarData}
+                margin={{ top: 4, right: 8, left: -22, bottom: 0 }}
+                barCategoryGap="30%"
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke={grid} vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  tickLine={false}
+                  axisLine={{ stroke: grid }}
+                  interval={0}
+                  tick={<AxisCategoryTick highlight={hotTempLabel} isDark={isDark} />}
                 />
                 <YAxis
                   tick={tickProps}
@@ -312,96 +583,78 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
                   domain={['auto', 'auto']}
                   unit="°"
                 />
-                <Tooltip content={(p) => <ChartTooltip {...p} unit="°C" isDark={isDark} />} />
-                <Legend
-                  iconType="circle"
-                  iconSize={7}
-                  wrapperStyle={{ fontSize: 10, color: tick, paddingTop: 10 }}
+                <Tooltip
+                  cursor={tooltipCursor}
+                  content={(p) => <BarTooltip {...(p as TooltipProps<number, string>)} unit="°C" isDark={isDark} />}
                 />
-                {axisIds.map((id) => (
-                  <Line
-                    key={id}
-                    type="monotone"
-                    dataKey={id}
-                    stroke={AXIS_COLORS[id] ?? '#6b7280'}
-                    strokeWidth={1.5}
-                    dot={false}
-                    activeDot={{ r: 4, strokeWidth: 0 }}
-                    isAnimationActive={false}
-                  />
-                ))}
-              </LineChart>
+                <Bar
+                  dataKey="value"
+                  fill={RED}
+                  radius={[3, 3, 0, 0]}
+                  maxBarSize={32}
+                  isAnimationActive={false}
+                />
+              </BarChart>
             </ResponsiveContainer>
-            </div>
-          )}
+          </div>
         </div>
 
-        {/* Health donut */}
         <div className={`${card} p-5 flex flex-col`}>
           <SectionHeader
-            title="Axis Health"
+            accent="Axis"
+            rest="Health"
             sub="Temperature threshold status"
-            icon={<CircleDot size={16} />}
             isDark={isDark}
           />
           <div className="flex-1 flex flex-col items-center justify-center">
             <div className="w-full h-[140px] sm:h-[160px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={52}
-                  outerRadius={72}
-                  paddingAngle={4}
-                  dataKey="value"
-                  startAngle={90}
-                  endAngle={-270}
-                  strokeWidth={0}
-                >
-                  {pieData.map((entry, i) => (
-                    <Cell key={i} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  formatter={(v: number, name: string) => [`${v} axes`, name]}
-                  contentStyle={{
-                    background: isDark ? '#18181b' : '#fff',
-                    border: `1px solid ${isDark ? '#3f3f46' : '#e4e4e7'}`,
-                    borderRadius: '0.75rem',
-                    fontSize: 11,
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={pieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={52}
+                    outerRadius={72}
+                    paddingAngle={4}
+                    dataKey="value"
+                    startAngle={90}
+                    endAngle={-270}
+                    strokeWidth={0}
+                  >
+                    {pieData.map((entry, i) => (
+                      <Cell key={i} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    formatter={(v: number, name: string) => [`${v} axes`, name]}
+                    contentStyle={{
+                      background: isDark ? '#18181b' : '#fff',
+                      border: `1px solid ${isDark ? '#3f3f46' : '#e4e4e7'}`,
+                      borderRadius: '0.75rem',
+                      fontSize: 11,
+                    }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
             </div>
-
-            <div className="w-full space-y-2 mt-1">
+            <div className="w-full flex items-center justify-center gap-4 mt-4">
               {[
-                { name: 'Normal', count: healthCounts.normal, color: '#10b981', range: '< 45 °C' },
-                { name: 'Warning', count: healthCounts.warning, color: '#f59e0b', range: '45–48 °C' },
-                { name: 'Critical', count: healthCounts.critical, color: '#ef4444', range: '≥ 48 °C' },
+                { name: 'Normal', color: '#10b981' },
+                { name: 'Warning', color: '#f59e0b' },
+                { name: 'Critical', color: '#ef4444' },
               ].map((row) => (
-                <div key={row.name} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="w-2 h-2 rounded-full flex-shrink-0"
-                      style={{ background: row.color }}
-                    />
-                    <span className={`text-[11px] ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                      {row.name}
-                      <span className={`ml-1 ${isDark ? 'text-zinc-600' : 'text-zinc-400'}`}>
-                        ({row.range})
-                      </span>
-                    </span>
-                  </div>
+                <div key={row.name} className="flex items-center gap-1.5">
                   <span
-                    className={`text-xs font-mono font-semibold tabular-nums ${
-                      isDark ? 'text-zinc-300' : 'text-zinc-700'
+                    className="w-2 h-2 rounded-sm flex-shrink-0"
+                    style={{ background: row.color }}
+                  />
+                  <span
+                    className={`text-[10px] uppercase tracking-widest ${
+                      isDark ? 'text-zinc-400' : 'text-zinc-500'
                     }`}
                   >
-                    {row.count}
+                    {row.name}
                   </span>
                 </div>
               ))}
@@ -410,353 +663,199 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
         </div>
       </motion.div>
 
-      {/* ── Gripper lifetime bar + Axis stats table ───────────────────────── */}
+      {/* ── Torque load ───────────────────────────────────────────────────────── */}
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3 }}
-        className="grid grid-cols-1 lg:grid-cols-2 gap-4"
+        className={`${card} p-5`}
       >
-        {/* Cylinder bar chart */}
-        <div className={`${card} p-5`}>
-          <SectionHeader
-            title="Gripper Lifetime"
-            sub="Cylinder usage · % of max cycles"
-            icon={<BarChart2 size={16} />}
-            isDark={isDark}
-          />
-          <div className="w-full aspect-[2/1] min-h-[140px] max-h-[220px]">
+        <SectionHeader
+          accent="Torque"
+          rest="Load"
+          sub="Axis torque · % of rated"
+          legend={{ label: 'Torque', color: torqueFill }}
+          isDark={isDark}
+        />
+        <div className="w-full aspect-[16/5] min-h-[160px] max-h-[260px]">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
-              data={cylinderBarData}
-              layout="vertical"
-              margin={{ top: 0, right: 20, left: 4, bottom: 0 }}
+              data={torqueBarData}
+              margin={{ top: 4, right: 8, left: -22, bottom: 0 }}
               barCategoryGap="30%"
             >
-              <CartesianGrid strokeDasharray="3 3" stroke={grid} horizontal={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke={grid} vertical={false} />
               <XAxis
-                type="number"
-                domain={[0, 100]}
-                tick={tickProps}
+                dataKey="label"
                 tickLine={false}
                 axisLine={{ stroke: grid }}
-                unit="%"
+                interval={0}
+                tick={<AxisCategoryTick highlight={hotTorqueLabel} isDark={isDark} />}
               />
-              <YAxis
-                dataKey="name"
-                type="category"
-                tick={tickProps}
-                tickLine={false}
-                axisLine={false}
-                width={84}
-              />
+              <YAxis tick={tickProps} tickLine={false} axisLine={false} unit="%" />
               <Tooltip
-                formatter={(v: number) => [`${v}%`, 'Usage']}
-                contentStyle={{
-                  background: isDark ? '#18181b' : '#fff',
-                  border: `1px solid ${isDark ? '#3f3f46' : '#e4e4e7'}`,
-                  borderRadius: '0.75rem',
-                  fontSize: 11,
-                }}
+                cursor={tooltipCursor}
+                content={(p) => <BarTooltip {...(p as TooltipProps<number, string>)} unit="%" isDark={isDark} />}
               />
-              <Bar dataKey="usage" radius={[0, 4, 4, 0]} isAnimationActive={false}>
-                {cylinderBarData.map((entry, i) => (
-                  <Cell key={i} fill={entry.fill} />
-                ))}
-              </Bar>
+              <Bar
+                dataKey="value"
+                fill={torqueFill}
+                radius={[3, 3, 0, 0]}
+                maxBarSize={36}
+                isAnimationActive={false}
+              />
             </BarChart>
           </ResponsiveContainer>
-          </div>
-          <div className={`mt-3 flex items-center gap-5 ${labelCls}`}>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-sm bg-emerald-500 inline-block" />
-              Normal &lt; 80 %
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-sm bg-red-500 inline-block" />
-              Replace ≥ 80 %
-            </span>
-          </div>
-        </div>
-
-        {/* Axis stats table */}
-        <div className={`${card} p-5`}>
-          <SectionHeader
-            title="Temperature Statistics"
-            sub={`Session window · ${history.length} samples`}
-            icon={<Thermometer size={16} />}
-            isDark={isDark}
-          />
-          <div className="overflow-x-auto -mx-1 px-1">
-          <div className="min-w-[260px]">
-          <div
-            className={`grid grid-cols-5 gap-2 pb-2 mb-1 border-b text-[10px] uppercase tracking-widest font-semibold ${
-              isDark ? 'border-zinc-800 text-zinc-600' : 'border-zinc-100 text-zinc-400'
-            }`}
-          >
-            <span>Axis</span>
-            <span className="text-right">Live</span>
-            <span className="text-right">Min</span>
-            <span className="text-right">Max</span>
-            <span className="text-right">Avg</span>
-          </div>
-          {axisStats.map((ax) => (
-            <div
-              key={ax.id}
-              className={`grid grid-cols-5 gap-2 py-2.5 text-xs border-b last:border-0 ${
-                isDark ? 'border-zinc-800/40' : 'border-zinc-50'
-              }`}
-            >
-              <div className="flex items-center gap-1.5">
-                <span
-                  className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                  style={{ background: ax.color }}
-                />
-                <span className={`font-mono text-[10px] ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                  {ax.id}
-                </span>
-              </div>
-              <span
-                className={`text-right font-mono tabular-nums ${
-                  isDark ? 'text-zinc-300' : 'text-zinc-700'
-                }`}
-              >
-                {ax.live.toFixed(1)}
-              </span>
-              <span
-                className={`text-right font-mono tabular-nums ${
-                  isDark ? 'text-zinc-500' : 'text-zinc-500'
-                }`}
-              >
-                {ax.min.toFixed(1)}
-              </span>
-              <span
-                className={`text-right font-mono tabular-nums ${
-                  ax.max >= HEALTH_THRESHOLDS.critical
-                    ? 'text-red-500'
-                    : ax.max >= HEALTH_THRESHOLDS.warning
-                    ? 'text-amber-500'
-                    : isDark
-                    ? 'text-zinc-500'
-                    : 'text-zinc-500'
-                }`}
-              >
-                {ax.max.toFixed(1)}
-              </span>
-              <span
-                className={`text-right font-mono tabular-nums ${
-                  isDark ? 'text-zinc-400' : 'text-zinc-600'
-                }`}
-              >
-                {ax.avg.toFixed(1)}
-              </span>
-            </div>
-          ))}
-          <p className={`mt-3 text-[10px] uppercase tracking-widest ${isDark ? 'text-zinc-700' : 'text-zinc-400'}`}>
-            All values in °C — max shown red if ≥ {HEALTH_THRESHOLDS.critical} °C
-          </p>
-          </div>
-          </div>
         </div>
       </motion.div>
 
-      {/* ── Torque trend + Current draw trend ────────────────────────────── */}
+      {/* ── Current draw ──────────────────────────────────────────────────────── */}
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.35 }}
+        className={`${card} p-5`}
+      >
+        <SectionHeader
+          accent="Current"
+          rest="Draw"
+          sub="Axis current · amperes"
+          legend={{ label: 'Current', color: currentFill }}
+          isDark={isDark}
+        />
+        <div className="w-full aspect-[16/5] min-h-[160px] max-h-[260px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              data={currentBarData}
+              margin={{ top: 4, right: 8, left: -18, bottom: 0 }}
+              barCategoryGap="30%"
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke={grid} vertical={false} />
+              <XAxis
+                dataKey="label"
+                tickLine={false}
+                axisLine={{ stroke: grid }}
+                interval={0}
+                tick={<AxisCategoryTick highlight={hotCurrentLabel} isDark={isDark} />}
+              />
+              <YAxis tick={tickProps} tickLine={false} axisLine={false} unit="A" />
+              <Tooltip
+                cursor={tooltipCursor}
+                content={(p) => <BarTooltip {...(p as TooltipProps<number, string>)} unit="A" isDark={isDark} />}
+              />
+              <Bar
+                dataKey="value"
+                fill={currentFill}
+                radius={[3, 3, 0, 0]}
+                maxBarSize={36}
+                isAnimationActive={false}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </motion.div>
+
+      {/* ── Temperature Statistics (Figma) ───────────────────────────────────── */}
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.38 }}
+        className={`${card} p-6`}
+      >
+        <SectionHeader
+          accent="TEMPERATURE"
+          rest="STATISTICS"
+          sub={`SESSION WINDOW · ${history.length} SAMPLES`}
+          isDark={isDark}
+        />
+        <div className="space-y-2">
+          {axisBarStats.map((ax) => (
+            <TempBar key={ax.id} label={ax.id} current={ax.current} avg={ax.avg} />
+          ))}
+        </div>
+      </motion.div>
+
+      {/* ── Gripper Lifetime (Figma gauges) ──────────────────────────────────── */}
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.4 }}
-        className="grid grid-cols-1 lg:grid-cols-2 gap-4"
-      >
-        <div className={`${card} p-5`}>
-          <SectionHeader
-            title="Torque Load"
-            sub="Axis torque · % of rated"
-            icon={<Zap size={16} />}
-            isDark={isDark}
-          />
-          {history.length < 2 ? (
-            <EmptyState isDark={isDark} message="Collecting data…" />
-          ) : (
-            <div className="w-full aspect-[2/1] min-h-[140px] max-h-[220px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={torqueSeries} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={grid} />
-                <XAxis
-                  dataKey="label"
-                  tick={tickProps}
-                  tickLine={false}
-                  axisLine={{ stroke: grid }}
-                  interval="preserveStartEnd"
-                />
-                <YAxis tick={tickProps} tickLine={false} axisLine={false} unit="%" />
-                <Tooltip content={(p) => <ChartTooltip {...p} unit="%" isDark={isDark} />} />
-                <Legend
-                  iconType="circle"
-                  iconSize={7}
-                  wrapperStyle={{ fontSize: 10, color: tick, paddingTop: 8 }}
-                />
-                {axisIds.map((id) => (
-                  <Line
-                    key={id}
-                    type="monotone"
-                    dataKey={id}
-                    stroke={AXIS_COLORS[id] ?? '#6b7280'}
-                    strokeWidth={1.5}
-                    dot={false}
-                    activeDot={{ r: 3, strokeWidth: 0 }}
-                    isAnimationActive={false}
-                  />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
-            </div>
-          )}
-        </div>
-
-        <div className={`${card} p-5`}>
-          <SectionHeader
-            title="Current Draw"
-            sub="Axis current · amperes"
-            icon={<CircleDot size={16} />}
-            isDark={isDark}
-          />
-          {history.length < 2 ? (
-            <EmptyState isDark={isDark} message="Collecting data…" />
-          ) : (
-            <div className="w-full aspect-[2/1] min-h-[140px] max-h-[220px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={currentSeries} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={grid} />
-                <XAxis
-                  dataKey="label"
-                  tick={tickProps}
-                  tickLine={false}
-                  axisLine={{ stroke: grid }}
-                  interval="preserveStartEnd"
-                />
-                <YAxis tick={tickProps} tickLine={false} axisLine={false} unit="A" />
-                <Tooltip content={(p) => <ChartTooltip {...p} unit="A" isDark={isDark} />} />
-                <Legend
-                  iconType="circle"
-                  iconSize={7}
-                  wrapperStyle={{ fontSize: 10, color: tick, paddingTop: 8 }}
-                />
-                {axisIds.map((id) => (
-                  <Line
-                    key={id}
-                    type="monotone"
-                    dataKey={id}
-                    stroke={AXIS_COLORS[id] ?? '#6b7280'}
-                    strokeWidth={1.5}
-                    dot={false}
-                    activeDot={{ r: 3, strokeWidth: 0 }}
-                    isAnimationActive={false}
-                  />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
-            </div>
-          )}
-        </div>
-      </motion.div>
-
-      {/* ── Gripper status strip ──────────────────────────────────────────── */}
-      <motion.div
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.45 }}
-        className={`${card} p-5`}
+        className={`${card} p-6`}
       >
         <SectionHeader
-          title="Gripper Cylinder Status"
-          sub="Real-time reed sensor states"
-          icon={<BarChart2 size={16} />}
+          accent="GRIPPER"
+          rest="LIFETIME"
+          sub="CYLINDER USAGE · % OF MAX CYCLES"
           isDark={isDark}
         />
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          {Object.entries(data.gripper).map(([id, c]) => {
-            const pct = Math.round((c.lifetime_act / c.limit_lifetime) * 100);
-            const overLimit = pct >= 80;
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+          {cylinderEntries.map(([id, c]) => {
+            const pct = Math.min(
+              100,
+              Math.round((c.lifetime_act / c.limit_lifetime) * 100),
+            );
+            const color = pct >= 70 ? '#dc2626' : '#22c55e';
+            const name = cylinderLabel(id);
             return (
               <div
                 key={id}
-                className={`rounded-xl border p-3 transition-colors duration-300 ${
-                  overLimit
-                    ? isDark
-                      ? 'border-red-900/50 bg-red-900/10'
-                      : 'border-red-200 bg-red-50'
-                    : isDark
-                    ? 'border-zinc-800 bg-zinc-800/30'
-                    : 'border-zinc-100 bg-zinc-50'
+                className={`flex flex-col items-center rounded-xl border py-3 px-2 ${
+                  isDark ? 'border-zinc-800' : 'border-zinc-100'
                 }`}
               >
+                <SemiGauge pct={pct} color={color} />
                 <p
-                  className={`text-[10px] font-semibold uppercase tracking-tight truncate mb-2 ${
-                    isDark ? 'text-zinc-300' : 'text-zinc-700'
+                  className={`text-[9.5px] font-bold uppercase tracking-widest mt-1 ${
+                    isDark ? 'text-zinc-400' : 'text-zinc-500'
                   }`}
                 >
-                  {id.replace(' cylinder', '')}
+                  {name}
                 </p>
                 <p
-                  className={`text-xl font-mono font-light tabular-nums mb-2 ${
-                    overLimit ? 'text-red-500' : isDark ? 'text-white' : 'text-zinc-900'
+                  className={`text-[9.5px] font-bold uppercase tracking-widest mt-0.5 ${
+                    c.reed_open
+                      ? 'text-emerald-500'
+                      : isDark
+                        ? 'text-zinc-600'
+                        : 'text-zinc-300'
                   }`}
                 >
-                  {pct}%
+                  OPEN
                 </p>
-                <div
-                  className={`h-1 w-full rounded-full mb-2 ${isDark ? 'bg-zinc-700' : 'bg-zinc-200'}`}
-                >
-                  <div
-                    className={`h-full rounded-full transition-all duration-700 ${
-                      overLimit ? 'bg-red-500' : 'bg-emerald-500'
-                    }`}
-                    style={{ width: `${Math.min(pct, 100)}%` }}
-                  />
-                </div>
-                <div className="flex gap-1 mt-1">
-                  <span
-                    className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-widest ${
-                      c.reed_open
-                        ? 'bg-emerald-500/15 text-emerald-500'
-                        : isDark
-                        ? 'bg-zinc-800 text-zinc-600'
-                        : 'bg-zinc-100 text-zinc-400'
-                    }`}
-                  >
-                    Open
-                  </span>
-                  <span
-                    className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-widest ${
-                      c.reed_close
-                        ? isDark
-                          ? 'bg-red-500/15 text-red-400'
-                          : 'bg-red-100 text-red-600'
-                        : isDark
-                        ? 'bg-zinc-800 text-zinc-600'
-                        : 'bg-zinc-100 text-zinc-400'
-                    }`}
-                  >
-                    Close
-                  </span>
-                </div>
               </div>
             );
           })}
+          {/* Summary card */}
+          <div
+            className={`flex flex-col rounded-xl border py-3 px-4 ${
+              isDark ? 'border-zinc-800' : 'border-zinc-100'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span
+                className={`text-[9.5px] font-bold uppercase tracking-widest ${
+                  isDark ? 'text-zinc-400' : 'text-zinc-500'
+                }`}
+              >
+                SUMMARY
+              </span>
+              <span className="text-[9.5px] font-bold uppercase tracking-widest text-red-500">
+                status
+              </span>
+            </div>
+            <div className="flex-1 flex items-center justify-center py-2">
+              <span
+                className={`text-5xl font-bold font-mono ${
+                  isDark ? 'text-white' : 'text-zinc-900'
+                }`}
+              >
+                {openCount}/{cylinderEntries.length}
+              </span>
+            </div>
+          </div>
         </div>
       </motion.div>
-    </div>
-  );
-}
 
-// ─── helper ──────────────────────────────────────────────────────────────────
-
-function EmptyState({ isDark, message }: { isDark: boolean; message: string }) {
-  return (
-    <div className={`flex items-center justify-center h-40 text-xs uppercase tracking-widest ${
-      isDark ? 'text-zinc-700' : 'text-zinc-400'
-    }`}>
-      <span className="animate-pulse">{message}</span>
     </div>
   );
 }
