@@ -648,6 +648,12 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
               </BarChart>
             </ResponsiveContainer>
           </div>
+          <p className="text-xs sm:text-sm mt-3 leading-relaxed">
+            <span className="font-mono font-semibold text-red-600">{hotTempLabel}</span>
+            <span className={isDark ? 'text-white' : 'text-zinc-700'}>
+              {' '}— highest temperature ({peakTemp.toFixed(1)}°C)
+            </span>
+          </p>
         </div>
 
         <div className={`${card} p-5 flex flex-col`}>
@@ -684,7 +690,10 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
                       border: `1px solid ${isDark ? '#3f3f46' : '#e4e4e7'}`,
                       borderRadius: '0.75rem',
                       fontSize: 11,
+                      color: isDark ? '#fff' : '#18181b',
                     }}
+                    itemStyle={{ color: isDark ? '#fff' : '#18181b' }}
+                    labelStyle={{ color: isDark ? '#fff' : '#18181b' }}
                   />
                 </PieChart>
               </ResponsiveContainer>
@@ -762,6 +771,12 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
             </BarChart>
           </ResponsiveContainer>
         </div>
+        <p className="text-xs sm:text-sm mt-3 leading-relaxed">
+          <span className="font-mono font-semibold text-red-600">{hotTorqueLabel}</span>
+          <span className={isDark ? 'text-white' : 'text-zinc-700'}>
+            {' '}— highest % of rated ({peakTorque.toFixed(1)}%)
+          </span>
+        </p>
       </motion.div>
 
       {/* ── Current draw ──────────────────────────────────────────────────────── */}
@@ -812,6 +827,12 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
             </BarChart>
           </ResponsiveContainer>
         </div>
+        <p className="text-xs sm:text-sm mt-3 leading-relaxed">
+          <span className="font-mono font-semibold text-red-600">{hotCurrentLabel}</span>
+          <span className={isDark ? 'text-white' : 'text-zinc-700'}>
+            {' '}— highest amperes ({peakCurrent.toFixed(2)} A)
+          </span>
+        </p>
       </motion.div>
 
       {/* ── Temperature Statistics (Figma) ───────────────────────────────────── */}
