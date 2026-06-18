@@ -15,7 +15,6 @@ import {
   ChevronLeft,
   ExternalLink,
   Bell,
-  User,
   Box,
   Sun,
   Moon,
@@ -244,7 +243,7 @@ export default function App() {
               <img
                 src="/dna_logo.png"
                 alt="DNA logo"
-                className="w-full h-full object-contain scale-125"
+                className={`w-full h-full object-contain scale-125 ${theme === 'dark' ? 'brightness-0 invert' : ''}`}
               />
             </div>
             <span className={`text-sm sm:text-lg font-semibold tracking-tight uppercase transition-colors duration-500 ${
@@ -360,11 +359,6 @@ export default function App() {
                   </>
                 )}
               </AnimatePresence>
-            </div>
-            <div className={`h-7 w-7 sm:h-8 sm:w-8 rounded-full border flex items-center justify-center transition-all duration-500 ${
-              theme === 'dark' ? 'bg-zinc-800 border-zinc-700' : 'bg-zinc-100 border-zinc-200'
-            }`}>
-              <User className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${theme === 'dark' ? 'text-zinc-400' : 'text-zinc-500'}`} />
             </div>
           </div>
         </div>

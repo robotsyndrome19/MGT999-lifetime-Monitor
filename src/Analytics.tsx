@@ -11,6 +11,7 @@
  *   · colored legend badges top-right of each panel
  */
 
+import { useState, useEffect } from 'react';
 import {
   XAxis,
   YAxis,
@@ -22,6 +23,7 @@ import {
   Cell,
   BarChart,
   Bar,
+  LabelList,
   TooltipProps,
 } from 'recharts';
 import { Thermometer, Zap, CircleDot, Clock } from 'lucide-react';
@@ -192,7 +194,7 @@ function EmptyState({ isDark, message }: { isDark: boolean; message: string }) {
 // ─── Semi-circle SVG Gauge ───────────────────────────────────────────────────
 // Arc from 9 o'clock → 12 o'clock → 3 o'clock (sweep=1 = clockwise in SVG).
 
-function SemiGauge({ pct, color }: { pct: number; color: string }) {
+function SemiGauge({ pct, color, isDark }: { pct: number; color: string; isDark: boolean }) {
   const r = 52;
   const cx = 80;
   const cy = 74;
@@ -212,7 +214,7 @@ function SemiGauge({ pct, color }: { pct: number; color: string }) {
 
   return (
     <svg viewBox="0 0 160 84" className="w-full">
-      <path d={bgD} fill="none" stroke="#e5e7eb" strokeWidth={sw} strokeLinecap="round" />
+      <path d={bgD} fill="none" stroke={isDark ? '#27272a' : '#e5e7eb'} strokeWidth={sw} strokeLinecap="round" />
       {pct > 0 && (
         <path d={fgD} fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" />
       )}
@@ -222,7 +224,7 @@ function SemiGauge({ pct, color }: { pct: number; color: string }) {
         textAnchor="middle"
         fontSize="20"
         fontWeight="700"
-        fill="#111827"
+        fill={isDark ? '#ffffff' : '#111827'}
         fontFamily="ui-monospace, monospace"
       >
         {pct}%
@@ -243,33 +245,34 @@ function cylinderLabel(id: string): string {
     .toUpperCase();
 }
 
-function TempBar({ label, current, avg }: { label: string; current: number; avg: number }) {
-  const fillPct = Math.min(100, Math.max(0, (current / TEMP_SCALE) * 100));
-  const avgPct = Math.min(100, Math.max(0, (avg / TEMP_SCALE) * 100));
+function TempBar({ label, current, avg, min, max, isDark }: { label: string; current: number; avg: number; min: number; max: number; isDark: boolean }) {
+  const range = max - min || 1;
+  const fillPct = Math.min(100, Math.max(0, ((current - min) / range) * 100));
+  const avgPct = Math.min(100, Math.max(0, ((avg - min) / range) * 100));
 
   return (
     <div className="flex items-start gap-3">
-      <span className="w-12 pt-3 text-[9px] font-bold uppercase tracking-widest text-zinc-500 flex-shrink-0 text-right">
+      <span className={`w-14 pt-4 text-xs font-bold uppercase tracking-widest flex-shrink-0 text-right ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
         {label.toUpperCase()}
       </span>
       <div className="flex-1 min-w-0">
         {/* Floating labels */}
-        <div className="relative h-4 select-none">
-          <span className="absolute left-0 text-[8.5px] font-semibold uppercase tracking-widest text-zinc-400 leading-none">
+        <div className="relative h-5 select-none">
+          <span className={`absolute left-0 text-[11px] font-semibold uppercase tracking-widest leading-none ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
             MIN
           </span>
           <span
-            className="absolute text-[8.5px] font-semibold uppercase tracking-widest text-emerald-500 leading-none"
+            className="absolute text-[11px] font-semibold uppercase tracking-widest text-emerald-500 leading-none"
             style={{ left: `${avgPct}%`, transform: 'translateX(-50%)' }}
           >
             AVG
           </span>
-          <span className="absolute right-0 text-[8.5px] font-semibold uppercase tracking-widest text-zinc-400 leading-none">
+          <span className={`absolute right-0 text-[11px] font-semibold uppercase tracking-widest leading-none ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
             MAX
           </span>
         </div>
         {/* Bar */}
-        <div className="relative h-3 rounded-full bg-zinc-200">
+        <div className={`relative h-3.5 rounded-full ${isDark ? 'bg-zinc-700' : 'bg-zinc-200'}`}>
           <div
             className="absolute left-0 top-0 h-full rounded-full bg-red-600 transition-all duration-700"
             style={{ width: `${fillPct}%` }}
@@ -278,17 +281,30 @@ function TempBar({ label, current, avg }: { label: string; current: number; avg:
             className="absolute top-0 h-full w-[2px] bg-emerald-500 z-10 -translate-x-px"
             style={{ left: `${avgPct}%` }}
           />
-        </div>
-        {/* Scale — avg value floats at avg position */}
-        <div className="relative mt-[2px]">
-          <span className="text-[7.5px] text-zinc-400">0</span>
           <span
-            className="absolute text-[7.5px] text-emerald-500 -translate-x-1/2"
+            className="absolute z-20 text-[11px] font-mono font-bold pointer-events-none whitespace-nowrap"
+            style={{
+              left: `${fillPct}%`,
+              top: '50%',
+              transform: fillPct > 85
+                ? 'translateX(-110%) translateY(-50%)'
+                : 'translateX(4px) translateY(-50%)',
+              color: fillPct > 85 ? '#fff' : '#ef4444',
+            }}
+          >
+            {current.toFixed(1)}
+          </span>
+        </div>
+        {/* Scale numbers */}
+        <div className="relative mt-1">
+          <span className={`text-[11px] font-mono ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>{min.toFixed(1)}</span>
+          <span
+            className="absolute text-[11px] font-mono text-emerald-500 -translate-x-1/2"
             style={{ left: `${avgPct}%` }}
           >
-            {Math.round(avg)}
+            {avg.toFixed(1)}
           </span>
-          <span className="absolute right-0 text-[7.5px] text-zinc-400">100</span>
+          <span className={`absolute right-0 text-[11px] font-mono ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>{max.toFixed(1)}</span>
         </div>
       </div>
     </div>
@@ -299,6 +315,13 @@ function TempBar({ label, current, avg }: { label: string; current: number; avg:
 
 export default function Analytics({ data, history, theme }: AnalyticsProps) {
   const isDark = theme === 'dark';
+
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 1024);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 1024);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
 
   // ── derived values ────────────────────────────────────────────────────────
   const axisEntries = Object.entries(data.robot_axis);
@@ -352,6 +375,13 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
     return { label: day, value: parseFloat(avg.toFixed(1)) };
   });
 
+  const overviewNonZero = overviewData.filter((d) => d.value > 0);
+  const oMin = overviewNonZero.length ? Math.min(...overviewNonZero.map((d) => d.value)) : 0;
+  const oMax = overviewNonZero.length ? Math.max(...overviewNonZero.map((d) => d.value)) : 1;
+  const oRange = oMax - oMin || 1;
+  const overviewTimeLabel = (v: number) =>
+    (['06:00', '12:00', '18:00', '00:00'] as const)[Math.min(3, Math.floor(((v - oMin) / oRange) * 4))];
+
   const healthCounts = axisValues.reduce(
     (acc, a) => {
       if (a.temp >= HEALTH_THRESHOLDS.critical) acc.critical++;
@@ -396,6 +426,8 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
     return {
       id,
       current: a.temp,
+      min: temps.length ? Math.min(...temps) : a.temp,
+      max: temps.length ? Math.max(...temps) : a.temp,
       avg: temps.length ? temps.reduce((s, v) => s + v, 0) / temps.length : a.temp,
     };
   });
@@ -407,16 +439,11 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
   // ── theme tokens ──────────────────────────────────────────────────────────
   const grid = isDark ? '#27272a' : '#eef0f2';
   const tick = isDark ? '#71717a' : '#a1a1aa';
-  const torqueFill = isDark ? '#d4d4d8' : '#3f3f46';
-  const currentFill = isDark ? '#a1a1aa' : '#9ca3af';
+  const torqueFill = isDark ? '#e4e4e7' : '#3f3f46';
+  const currentFill = isDark ? '#71717a' : '#a1a1aa';
 
   const card = `rounded-2xl border transition-colors duration-500 ${
     isDark ? 'bg-zinc-900/40 border-red-900/10' : 'bg-white border-zinc-200 shadow-sm'
-  }`;
-  const heroCard = `rounded-2xl border transition-colors duration-500 ${
-    isDark
-      ? 'bg-zinc-900/40 border-red-900/20'
-      : 'bg-gradient-to-br from-rose-50 via-white to-white border-zinc-200 shadow-sm'
   }`;
   const labelCls = `text-[10px] font-semibold uppercase tracking-widest ${
     isDark ? 'text-zinc-500' : 'text-zinc-400'
@@ -501,12 +528,12 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
-        className={`${heroCard} p-5`}
+        className={`${card} p-5`}
       >
         <SectionHeader
           accent="Overview"
           rest="Real-Time"
-          sub="Mean axis temperature · °C · by day"
+          sub="Robot active hours · by day"
           legend={{ label: 'Temp', color: RED }}
           isDark={isDark}
         />
@@ -517,7 +544,7 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={overviewData}
-                margin={{ top: 4, right: 8, left: -18, bottom: 0 }}
+                margin={{ top: isMobile ? 18 : 4, right: 8, left: -18, bottom: 0 }}
                 barCategoryGap="22%"
               >
                 <CartesianGrid strokeDasharray="3 3" stroke={grid} vertical={false} />
@@ -528,10 +555,26 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
                   axisLine={{ stroke: grid }}
                   interval={0}
                 />
-                <YAxis tick={tickProps} tickLine={false} axisLine={false} unit="°" />
+                <YAxis
+                  tick={tickProps}
+                  tickLine={false}
+                  axisLine={false}
+                  tickCount={4}
+                  tickFormatter={(_v, i) => (['06:00', '12:00', '18:00', '00:00'][i] ?? '')}
+                />
                 <Tooltip
                   cursor={tooltipCursor}
-                  content={(p) => <BarTooltip {...(p as TooltipProps<number, string>)} unit="°C" isDark={isDark} />}
+                  content={(p) => {
+                    if (!p.active || !p.payload?.length) return null;
+                    const v = p.payload[0].value as number;
+                    return (
+                      <div className={`rounded-xl border px-3 py-2 text-xs shadow-2xl ${isDark ? 'bg-zinc-900 border-zinc-700' : 'bg-white border-zinc-200'}`}>
+                        <p className={`font-mono font-semibold ${isDark ? 'text-white' : 'text-zinc-900'}`}>
+                          {p.label} · {overviewTimeLabel(v)}
+                        </p>
+                      </div>
+                    );
+                  }}
                 />
                 <Bar
                   dataKey="value"
@@ -539,7 +582,11 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
                   radius={[3, 3, 0, 0]}
                   maxBarSize={42}
                   isAnimationActive={false}
-                />
+                >
+                  {isMobile && (
+                    <LabelList dataKey="value" position="top" style={{ fontSize: 9, fill: tick }} formatter={(v: number) => overviewTimeLabel(v)} />
+                  )}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -565,7 +612,7 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={tempBarData}
-                margin={{ top: 4, right: 8, left: -22, bottom: 0 }}
+                margin={{ top: isMobile ? 18 : 4, right: 8, left: -22, bottom: 0 }}
                 barCategoryGap="30%"
               >
                 <CartesianGrid strokeDasharray="3 3" stroke={grid} vertical={false} />
@@ -593,7 +640,11 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
                   radius={[3, 3, 0, 0]}
                   maxBarSize={32}
                   isAnimationActive={false}
-                />
+                >
+                  {isMobile && (
+                    <LabelList dataKey="value" position="top" style={{ fontSize: 9, fill: tick }} formatter={(v: number) => `${v.toFixed(1)}°`} />
+                  )}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -681,7 +732,7 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={torqueBarData}
-              margin={{ top: 4, right: 8, left: -22, bottom: 0 }}
+              margin={{ top: isMobile ? 18 : 4, right: 8, left: -22, bottom: 0 }}
               barCategoryGap="30%"
             >
               <CartesianGrid strokeDasharray="3 3" stroke={grid} vertical={false} />
@@ -703,7 +754,11 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
                 radius={[3, 3, 0, 0]}
                 maxBarSize={36}
                 isAnimationActive={false}
-              />
+              >
+                {isMobile && (
+                  <LabelList dataKey="value" position="top" style={{ fontSize: 9, fill: tick }} formatter={(v: number) => `${v.toFixed(1)}%`} />
+                )}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -727,7 +782,7 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={currentBarData}
-              margin={{ top: 4, right: 8, left: -18, bottom: 0 }}
+              margin={{ top: isMobile ? 18 : 4, right: 8, left: -18, bottom: 0 }}
               barCategoryGap="30%"
             >
               <CartesianGrid strokeDasharray="3 3" stroke={grid} vertical={false} />
@@ -749,7 +804,11 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
                 radius={[3, 3, 0, 0]}
                 maxBarSize={36}
                 isAnimationActive={false}
-              />
+              >
+                {isMobile && (
+                  <LabelList dataKey="value" position="top" style={{ fontSize: 9, fill: tick }} formatter={(v: number) => `${v.toFixed(2)}A`} />
+                )}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -770,7 +829,7 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
         />
         <div className="space-y-2">
           {axisBarStats.map((ax) => (
-            <TempBar key={ax.id} label={ax.id} current={ax.current} avg={ax.avg} />
+            <TempBar key={ax.id} label={ax.id} current={ax.current} min={ax.min} max={ax.max} avg={ax.avg} isDark={isDark} />
           ))}
         </div>
       </motion.div>
@@ -803,7 +862,7 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
                   isDark ? 'border-zinc-800' : 'border-zinc-100'
                 }`}
               >
-                <SemiGauge pct={pct} color={color} />
+                <SemiGauge pct={pct} color={color} isDark={isDark} />
                 <p
                   className={`text-[9.5px] font-bold uppercase tracking-widest mt-1 ${
                     isDark ? 'text-zinc-400' : 'text-zinc-500'
