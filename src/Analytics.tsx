@@ -29,12 +29,23 @@ import {
 import { Thermometer, Zap, CircleDot, Clock } from 'lucide-react';
 import { motion } from 'motion/react';
 import { RobotData, DataSnapshot } from './types';
+import { useLang } from './i18n';
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
 const RED = '#dc2626';
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
+
+const MOCK_SESSIONS: Record<string, Array<{ start: number; end: number }>> = {
+  Mon: [{ start: 6 + 15/60, end: 18 + 45/60 }],                                         // 06:15 – 18:45
+  Tue: [{ start: 6, end: 21 + 30/60 }],                                                   // 06:00 – 21:30
+  Wed: [{ start: 6 + 20/60, end: 11 + 50/60 }, { start: 13 + 10/60, end: 17 + 35/60 }], // 06:20 – 11:50 / 13:10 – 17:35 (maintenance break)
+  Thu: [{ start: 5 + 45/60, end: 22 + 10/60 }],                                          // 05:45 – 22:10
+  Fri: [{ start: 6 + 5/60, end: 19 + 30/60 }],                                           // 06:05 – 19:30
+  Sat: [{ start: 7 + 30/60, end: 13 + 15/60 }],                                          // 07:30 – 13:15
+  Sun: [],                                                                                  // No session
+};
 
 const AXIS_COLORS: Record<string, string> = {
   'Axis 1': '#ef4444',
@@ -52,6 +63,34 @@ interface AnalyticsProps {
   data: RobotData;
   history: DataSnapshot[];
   theme: 'dark' | 'light';
+  isRobotOn: boolean;
+}
+
+interface Session {
+  date: string;
+  start: number;
+  end: number | null;
+}
+
+// ─── session helpers ──────────────────────────────────────────────────────────
+
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function loadSessions(): Session[] {
+  try { return JSON.parse(localStorage.getItem('robot_sessions') ?? '[]'); }
+  catch { return []; }
+}
+
+function saveSessions(s: Session[]): void {
+  localStorage.setItem('robot_sessions', JSON.stringify(s.slice(-200)));
+}
+
+function fmtHour(h: number): string {
+  const hh = Math.floor(h);
+  const mm = Math.round((h - hh) * 60);
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -313,8 +352,9 @@ function TempBar({ label, current, avg, min, max, isDark }: { label: string; cur
 
 // ─── main component ──────────────────────────────────────────────────────────
 
-export default function Analytics({ data, history, theme }: AnalyticsProps) {
+export default function Analytics({ data, history, theme, isRobotOn }: AnalyticsProps) {
   const isDark = theme === 'dark';
+  const { t } = useLang();
 
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 1024);
   useEffect(() => {
@@ -322,6 +362,26 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
     window.addEventListener('resize', handler);
     return () => window.removeEventListener('resize', handler);
   }, []);
+
+  useEffect(() => {
+    const date = todayStr();
+    const hours = new Date().getHours() + new Date().getMinutes() / 60;
+    const sessions = loadSessions();
+    const hasOpenToday = sessions.some((s) => s.date === date && s.end === null);
+
+    if (isRobotOn && !hasOpenToday) {
+      sessions.push({ date, start: hours, end: null });
+      saveSessions(sessions);
+    } else if (!isRobotOn && hasOpenToday) {
+      for (let i = sessions.length - 1; i >= 0; i--) {
+        if (sessions[i].date === date && sessions[i].end === null) {
+          sessions[i].end = hours;
+          break;
+        }
+      }
+      saveSessions(sessions);
+    }
+  }, [isRobotOn]);
 
   // ── derived values ────────────────────────────────────────────────────────
   const axisEntries = Object.entries(data.robot_axis);
@@ -360,27 +420,24 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
     value: parseFloat(a.current.toFixed(2)),
   }));
 
-  const overviewData = WEEKDAYS.map((day, i) => {
-    if (history.length === 0) return { label: day, value: 0 };
-    const start = Math.floor((i * history.length) / 7);
-    const end = Math.max(start + 1, Math.floor(((i + 1) * history.length) / 7));
-    const temps: number[] = [];
-    history.slice(start, end).forEach((snap) => {
-      axisIds.forEach((id) => {
-        const t = snap.axes[id]?.temp;
-        if (typeof t === 'number') temps.push(t);
-      });
-    });
-    const avg = temps.length ? temps.reduce((s, v) => s + v, 0) / temps.length : 0;
-    return { label: day, value: parseFloat(avg.toFixed(1)) };
-  });
+  const todayIdx = (new Date().getDay() + 6) % 7;
+  const nowHours = new Date().getHours() + new Date().getMinutes() / 60;
+  const storedSessions = loadSessions();
 
-  const overviewNonZero = overviewData.filter((d) => d.value > 0);
-  const oMin = overviewNonZero.length ? Math.min(...overviewNonZero.map((d) => d.value)) : 0;
-  const oMax = overviewNonZero.length ? Math.max(...overviewNonZero.map((d) => d.value)) : 1;
-  const oRange = oMax - oMin || 1;
-  const overviewTimeLabel = (v: number) =>
-    (['06:00', '12:00', '18:00', '00:00'] as const)[Math.min(3, Math.floor(((v - oMin) / oRange) * 4))];
+  const overviewData = WEEKDAYS.map((day, i) => {
+    const status = i < todayIdx ? 'past' as const : i === todayIdx ? 'today' as const : 'future' as const;
+    if (status === 'future') return { label: day, sessions: [] as { start: number; end: number }[], status };
+
+    const d = new Date();
+    d.setDate(d.getDate() - (todayIdx - i));
+    const dateStr = d.toISOString().slice(0, 10);
+
+    const stored = storedSessions
+      .filter((s) => s.date === dateStr)
+      .map((s) => ({ start: s.start, end: s.end ?? nowHours }));
+
+    return { label: day, sessions: stored.length > 0 ? stored : (MOCK_SESSIONS[day] ?? []), status };
+  });
 
   const healthCounts = axisValues.reduce(
     (acc, a) => {
@@ -393,9 +450,9 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
   );
 
   const pieData = [
-    { name: 'Normal', value: healthCounts.normal, color: '#10b981' },
-    { name: 'Warning', value: healthCounts.warning, color: '#f59e0b' },
-    { name: 'Critical', value: healthCounts.critical, color: '#ef4444' },
+    { name: t.analytics.normal, value: healthCounts.normal, color: '#10b981' },
+    { name: t.analytics.warning, value: healthCounts.warning, color: '#f59e0b' },
+    { name: t.analytics.critical, value: healthCounts.critical, color: '#ef4444' },
   ].filter((d) => d.value > 0);
 
   const cylinderBarData = Object.entries(data.gripper).map(([id, c]) => ({
@@ -467,35 +524,35 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
         {(
           [
             {
-              label: 'Avg Temperature',
+              label: t.analytics.avgTemp,
               value: avgTemp.toFixed(1),
               unit: '°C',
-              sub: `Peak ${peakTemp.toFixed(1)} °C`,
+              sub: `${t.analytics.peak} ${peakTemp.toFixed(1)} °C`,
               warn: peakTemp >= HEALTH_THRESHOLDS.critical,
               icon: <Thermometer size={18} className={isDark ? 'text-red-500' : 'text-red-600'} />,
               delay: 0,
             },
             {
-              label: 'Avg Torque',
+              label: t.analytics.avgTorque,
               value: avgTorque.toFixed(1),
               unit: '%',
-              sub: `Peak ${peakTorque.toFixed(1)} %`,
+              sub: `${t.analytics.peak} ${peakTorque.toFixed(1)} %`,
               icon: <Zap size={18} className={isDark ? 'text-amber-500' : 'text-amber-600'} />,
               delay: 0.05,
             },
             {
-              label: 'Avg Current',
+              label: t.analytics.avgCurrent,
               value: avgCurrent.toFixed(2),
               unit: 'A',
-              sub: `Peak ${peakCurrent.toFixed(2)} A`,
+              sub: `${t.analytics.peak} ${peakCurrent.toFixed(2)} A`,
               icon: <CircleDot size={18} className={isDark ? 'text-blue-500' : 'text-blue-600'} />,
               delay: 0.1,
             },
             {
-              label: 'System Runtime',
+              label: t.analytics.systemRuntime,
               value: data.robot_lifetime.runtime.toFixed(2),
               unit: 'hrs',
-              sub: `${history.length} samples collected`,
+              sub: `${history.length} ${t.analytics.samplesCollected}`,
               icon: <Clock size={18} className={isDark ? 'text-emerald-500' : 'text-emerald-600'} />,
               delay: 0.15,
             },
@@ -531,66 +588,84 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
         className={`${card} p-5`}
       >
         <SectionHeader
-          accent="Overview"
-          rest="Real-Time"
-          sub="Robot active hours · by day"
-          legend={{ label: 'Temp', color: RED }}
+          accent={t.analytics.overviewAccent}
+          rest={t.analytics.overviewRest}
+          sub={t.analytics.overviewSub}
           isDark={isDark}
         />
-        {history.length === 0 ? (
-          <EmptyState isDark={isDark} message="Collecting data…" />
-        ) : (
-          <div className="w-full aspect-[16/5] min-h-[180px] max-h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={overviewData}
-                margin={{ top: isMobile ? 18 : 4, right: 8, left: -18, bottom: 0 }}
-                barCategoryGap="22%"
+        <div className="space-y-3 pt-2">
+          <div className="relative ml-12 mr-4 h-4">
+            {[0, 6, 12, 18, 24].map((h) => (
+              <span
+                key={h}
+                className={`absolute text-[9px] font-mono -translate-x-1/2 ${isDark ? 'text-zinc-600' : 'text-zinc-400'}`}
+                style={{ left: `${(h / 24) * 100}%` }}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke={grid} vertical={false} />
-                <XAxis
-                  dataKey="label"
-                  tick={tickProps}
-                  tickLine={false}
-                  axisLine={{ stroke: grid }}
-                  interval={0}
-                />
-                <YAxis
-                  tick={tickProps}
-                  tickLine={false}
-                  axisLine={false}
-                  tickCount={4}
-                  tickFormatter={(_v, i) => (['06:00', '12:00', '18:00', '00:00'][i] ?? '')}
-                />
-                <Tooltip
-                  cursor={tooltipCursor}
-                  content={(p) => {
-                    if (!p.active || !p.payload?.length) return null;
-                    const v = p.payload[0].value as number;
-                    return (
-                      <div className={`rounded-xl border px-3 py-2 text-xs shadow-2xl ${isDark ? 'bg-zinc-900 border-zinc-700' : 'bg-white border-zinc-200'}`}>
-                        <p className={`font-mono font-semibold ${isDark ? 'text-white' : 'text-zinc-900'}`}>
-                          {p.label} · {overviewTimeLabel(v)}
-                        </p>
-                      </div>
-                    );
-                  }}
-                />
-                <Bar
-                  dataKey="value"
-                  fill={RED}
-                  radius={[3, 3, 0, 0]}
-                  maxBarSize={42}
-                  isAnimationActive={false}
-                >
-                  {isMobile && (
-                    <LabelList dataKey="value" position="top" style={{ fontSize: 9, fill: tick }} formatter={(v: number) => overviewTimeLabel(v)} />
-                  )}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+                {`${String(h).padStart(2, '0')}:00`}
+              </span>
+            ))}
           </div>
-        )}
+          {overviewData.map(({ label, sessions, status }) => {
+            const isToday = status === 'today';
+            const isFuture = status === 'future';
+            const totalHrs = sessions.reduce((s, seg) => s + (seg.end - seg.start), 0);
+            const rightLabel = isFuture
+              ? '—'
+              : sessions.length === 0
+                ? 'OFF'
+                : isToday && isRobotOn
+                  ? `${fmtHour(sessions[0].start)} → NOW`
+                  : sessions.length === 1
+                    ? `${fmtHour(sessions[0].start)} – ${fmtHour(sessions[0].end)}`
+                    : `${Math.floor(totalHrs)}h ${Math.round((totalHrs % 1) * 60)}m`;
+
+            return (
+              <div key={label} className="flex items-center gap-3">
+                <span
+                  className={`w-10 text-right text-[10px] font-bold uppercase tracking-widest shrink-0 ${
+                    isToday ? 'text-red-600' : isFuture
+                      ? (isDark ? 'text-zinc-700' : 'text-zinc-300')
+                      : (isDark ? 'text-zinc-400' : 'text-zinc-500')
+                  }`}
+                >
+                  {label}
+                </span>
+                <div className={`relative flex-1 h-6 rounded overflow-hidden ${isDark ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
+                  {sessions.map((seg, idx) => (
+                    <div
+                      key={idx}
+                      className={`absolute top-0 h-full ${isToday ? 'bg-red-600' : (isDark ? 'bg-zinc-500' : 'bg-zinc-400')}`}
+                      style={{
+                        left: `${(seg.start / 24) * 100}%`,
+                        width: `${((seg.end - seg.start) / 24) * 100}%`,
+                      }}
+                    />
+                  ))}
+                  {isToday && (
+                    <div
+                      className="absolute top-0 h-full w-0.5 bg-white/60 z-10"
+                      style={{ left: `${(nowHours / 24) * 100}%` }}
+                    />
+                  )}
+                </div>
+                <div className="flex items-center gap-1 shrink-0 w-28">
+                  <span
+                    className={`text-[10px] font-mono ${
+                      isToday ? 'text-red-500' : isFuture
+                        ? (isDark ? 'text-zinc-700' : 'text-zinc-300')
+                        : (isDark ? 'text-zinc-400' : 'text-zinc-500')
+                    }`}
+                  >
+                    {rightLabel}
+                  </span>
+                  {isToday && isRobotOn && (
+                    <span className="text-[9px] text-red-500 animate-pulse">●</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </motion.div>
 
       {/* ── Temperature trend (2/3) + Health donut (1/3) ─────────────────── */}
@@ -602,10 +677,10 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
       >
         <div className={`${card} p-5 lg:col-span-2`}>
           <SectionHeader
-            accent="Temperature"
-            rest="Trend"
-            sub="Live axis temps · °C"
-            legend={{ label: 'Temp', color: RED }}
+            accent={t.analytics.tempAccent}
+            rest={t.analytics.tempRest}
+            sub={t.analytics.tempSub}
+            legend={{ label: t.analytics.avgTemp, color: RED }}
             isDark={isDark}
           />
           <div className="w-full aspect-[5/2] min-h-[150px] max-h-[260px]">
@@ -652,9 +727,9 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
 
         <div className={`${card} p-5 flex flex-col`}>
           <SectionHeader
-            accent="Axis"
-            rest="Health"
-            sub="Temperature threshold status"
+            accent={t.analytics.healthAccent}
+            rest={t.analytics.healthRest}
+            sub={t.analytics.healthSub}
             isDark={isDark}
           />
           <div className="flex-1 flex flex-col items-center justify-center">
@@ -691,9 +766,9 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
             </div>
             <div className="w-full flex items-center justify-center gap-4 mt-4">
               {[
-                { name: 'Normal', color: '#10b981' },
-                { name: 'Warning', color: '#f59e0b' },
-                { name: 'Critical', color: '#ef4444' },
+                { name: t.analytics.normal, color: '#10b981' },
+                { name: t.analytics.warning, color: '#f59e0b' },
+                { name: t.analytics.critical, color: '#ef4444' },
               ].map((row) => (
                 <div key={row.name} className="flex items-center gap-1.5">
                   <span
@@ -722,10 +797,10 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
         className={`${card} p-5`}
       >
         <SectionHeader
-          accent="Torque"
-          rest="Load"
-          sub="Axis torque · % of rated"
-          legend={{ label: 'Torque', color: torqueFill }}
+          accent={t.analytics.torqueAccent}
+          rest={t.analytics.torqueRest}
+          sub={t.analytics.torqueSub}
+          legend={{ label: t.analytics.avgTorque, color: torqueFill }}
           isDark={isDark}
         />
         <div className="w-full aspect-[16/5] min-h-[160px] max-h-[260px]">
@@ -772,10 +847,10 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
         className={`${card} p-5`}
       >
         <SectionHeader
-          accent="Current"
-          rest="Draw"
-          sub="Axis current · amperes"
-          legend={{ label: 'Current', color: currentFill }}
+          accent={t.analytics.currentAccent}
+          rest={t.analytics.currentRest}
+          sub={t.analytics.currentSub}
+          legend={{ label: t.analytics.avgCurrent, color: currentFill }}
           isDark={isDark}
         />
         <div className="w-full aspect-[16/5] min-h-[160px] max-h-[260px]">
@@ -822,9 +897,9 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
         className={`${card} p-6`}
       >
         <SectionHeader
-          accent="TEMPERATURE"
-          rest="STATISTICS"
-          sub={`SESSION WINDOW · ${history.length} SAMPLES`}
+          accent={t.analytics.tempStatsAccent}
+          rest={t.analytics.tempStatsRest}
+          sub={`${t.analytics.tempStatsSub} · ${history.length} ${t.analytics.samples}`}
           isDark={isDark}
         />
         <div className="space-y-2">
@@ -842,9 +917,9 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
         className={`${card} p-6`}
       >
         <SectionHeader
-          accent="GRIPPER"
-          rest="LIFETIME"
-          sub="CYLINDER USAGE · % OF MAX CYCLES"
+          accent={t.analytics.gripperAccent}
+          rest={t.analytics.gripperRest}
+          sub={t.analytics.gripperSub}
           isDark={isDark}
         />
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
@@ -879,7 +954,7 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
                         : 'text-zinc-300'
                   }`}
                 >
-                  OPEN
+                  {t.analytics.openCyl}
                 </p>
               </div>
             );
@@ -896,10 +971,10 @@ export default function Analytics({ data, history, theme }: AnalyticsProps) {
                   isDark ? 'text-zinc-400' : 'text-zinc-500'
                 }`}
               >
-                SUMMARY
+                {t.analytics.summary}
               </span>
               <span className="text-[9.5px] font-bold uppercase tracking-widest text-red-500">
-                status
+                {t.analytics.status}
               </span>
             </div>
             <div className="flex-1 flex items-center justify-center py-2">
