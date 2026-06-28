@@ -210,7 +210,7 @@ const th: Translations = {
     collectingData: 'กำลังเก็บข้อมูล…',
     tempAccent: 'แนวโน้ม',
     tempRest: 'อุณหภูมิ',
-    tempSub: 'อุณหภูมิแกนแบบสด · °C',
+    tempSub: 'อุณหภูมิแกนแบบเรียลไทม์ · °C',
     healthAccent: 'สุขภาพ',
     healthRest: 'แกน',
     healthSub: 'สถานะเกณฑ์อุณหภูมิ',
