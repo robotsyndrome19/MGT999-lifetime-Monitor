@@ -145,7 +145,7 @@ const th: Translations = {
   stats: {
     systemRuntime: 'เวลารันระบบ',
     activeAxes: 'แกนที่ใช้งาน',
-    systemHealth: 'สุขภาพระบบ',
+    systemHealth: 'ประสิทธิภาพระบบ',
     hrs: 'ชม.',
     online: 'ออนไลน์',
   },
@@ -221,7 +221,7 @@ const th: Translations = {
     torqueRest: 'แรงบิด',
     torqueSub: 'แรงบิดแกน · % ของพิกัด',
     currentAccent: 'กระแส',
-    currentRest: 'ที่ดึง',
+    currentRest: 'ไฟฟ้า ที่ใช้งาน',
     currentSub: 'กระแสแกน · แอมแปร์',
     tempStatsAccent: 'สถิติ',
     tempStatsRest: 'อุณหภูมิ',
