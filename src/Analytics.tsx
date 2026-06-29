@@ -731,7 +731,7 @@ export default function Analytics({ data, history, theme, isRobotOn }: Analytics
                   {closeStr}
                 </span>
 
-                <div className={`relative h-5 rounded ${isDark ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
+                <div className={`relative h-3 sm:h-5 rounded ${isDark ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
                   {barPct > 0 && (
                     <div
                       className="absolute left-0 top-0 h-full rounded"
@@ -820,6 +820,10 @@ export default function Analytics({ data, history, theme, isRobotOn }: Analytics
               </BarChart>
             </ResponsiveContainer>
           </div>
+          <p className={`text-xs mt-3 ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+            <span className="font-bold" style={{ color: RED }}>{hotTempLabel}</span>
+            {' – '}{t.analytics.highestTemp} ({peakTemp.toFixed(1)}°C)
+          </p>
         </div>
 
         <div className={`${card} p-5 flex flex-col`}>
@@ -934,6 +938,10 @@ export default function Analytics({ data, history, theme, isRobotOn }: Analytics
             </BarChart>
           </ResponsiveContainer>
         </div>
+        <p className={`text-xs mt-3 ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+          <span className="font-bold" style={{ color: RED }}>{hotTorqueLabel}</span>
+          {' – '}{t.analytics.highestTorque} ({peakTorque.toFixed(1)}%)
+        </p>
       </motion.div>
 
       {/* ── Current draw ──────────────────────────────────────────────────────── */}
@@ -984,6 +992,10 @@ export default function Analytics({ data, history, theme, isRobotOn }: Analytics
             </BarChart>
           </ResponsiveContainer>
         </div>
+        <p className={`text-xs mt-3 ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+          <span className="font-bold" style={{ color: RED }}>{hotCurrentLabel}</span>
+          {' – '}{t.analytics.highestCurrent} ({peakCurrent.toFixed(2)} A)
+        </p>
       </motion.div>
 
       {/* ── Temperature Statistics (Figma) ───────────────────────────────────── */}
