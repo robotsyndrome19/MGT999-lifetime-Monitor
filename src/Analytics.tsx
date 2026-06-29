@@ -37,15 +37,44 @@ const RED = '#dc2626';
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
 
-const MOCK_SESSIONS: Record<string, Array<{ start: number; end: number }>> = {
-  Mon: [{ start: 6 + 15/60, end: 18 + 45/60 }],                                         // 06:15 – 18:45
-  Tue: [{ start: 6, end: 21 + 30/60 }],                                                   // 06:00 – 21:30
-  Wed: [{ start: 6 + 20/60, end: 11 + 50/60 }, { start: 13 + 10/60, end: 17 + 35/60 }], // 06:20 – 11:50 / 13:10 – 17:35 (maintenance break)
-  Thu: [{ start: 5 + 45/60, end: 22 + 10/60 }],                                          // 05:45 – 22:10
-  Fri: [{ start: 6 + 5/60, end: 19 + 30/60 }],                                           // 06:05 – 19:30
-  Sat: [{ start: 7 + 30/60, end: 13 + 15/60 }],                                          // 07:30 – 13:15
-  Sun: [],                                                                                  // No session
-};
+// Set to real API endpoint when available, e.g. 'https://your-api.com/sessions/weekly'
+const SESSION_API_URL = '';
+
+type SessionApiData = Record<string, Array<{ start: number; end: number | null }>>;
+
+function generateMockSessionData(): SessionApiData {
+  const todayIdx = (new Date().getDay() + 6) % 7;
+  const allSessions: SessionApiData = {
+    Mon: [{ start: 6,           end: 18 + 45/60 }],
+    Tue: [{ start: 6,           end: 21 + 30/60 }],
+    Wed: [{ start: 9,           end: 18 + 54/60 }],
+    Thu: [{ start: 6,           end: 22 + 24/60 }],
+    Fri: [{ start: 5 + 55/60,  end: 19 + 19/60 }],
+    Sat: [{ start: 4 + 5/60,   end: 16 + 35/60 }],
+    Sun: [],
+  };
+  return Object.fromEntries(
+    WEEKDAYS.map((day, i) => {
+      if (i > todayIdx) return [day, []];
+      if (i === todayIdx) {
+        const s = allSessions[day]?.[0];
+        return [day, s ? [{ start: s.start, end: null }] : []];
+      }
+      return [day, allSessions[day] ?? []];
+    })
+  );
+}
+
+async function fetchSessionData(): Promise<SessionApiData> {
+  if (!SESSION_API_URL) return generateMockSessionData();
+  try {
+    const res = await fetch(SESSION_API_URL);
+    if (!res.ok) throw new Error('fetch failed');
+    return res.json() as Promise<SessionApiData>;
+  } catch {
+    return generateMockSessionData();
+  }
+}
 
 const AXIS_COLORS: Record<string, string> = {
   'Axis 1': '#ef4444',
@@ -87,13 +116,14 @@ function saveSessions(s: Session[]): void {
   localStorage.setItem('robot_sessions', JSON.stringify(s.slice(-200)));
 }
 
-function fmtHour(h: number): string {
+function fmtTimeDot(h: number): string {
   const hh = Math.floor(h);
   const mm = Math.round((h - hh) * 60);
-  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  return `${hh}.${String(mm).padStart(2, '0')}`;
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
+
 
 function formatAxisLabel(id: string): string {
   const m = id.match(/(\d+)/);
@@ -383,6 +413,18 @@ export default function Analytics({ data, history, theme, isRobotOn }: Analytics
     }
   }, [isRobotOn]);
 
+  const [sessionApiData, setSessionApiData] = useState<SessionApiData>(() => generateMockSessionData());
+  useEffect(() => {
+    let alive = true;
+    const poll = async () => {
+      const d = await fetchSessionData();
+      if (alive) setSessionApiData(d);
+    };
+    poll();
+    const id = setInterval(poll, 30000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
   // ── derived values ────────────────────────────────────────────────────────
   const axisEntries = Object.entries(data.robot_axis);
   const axisValues = axisEntries.map(([, a]) => a);
@@ -424,20 +466,43 @@ export default function Analytics({ data, history, theme, isRobotOn }: Analytics
   const nowHours = new Date().getHours() + new Date().getMinutes() / 60;
   const storedSessions = loadSessions();
 
+  const MONTH_ABBR = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'] as const;
+
   const overviewData = WEEKDAYS.map((day, i) => {
     const status = i < todayIdx ? 'past' as const : i === todayIdx ? 'today' as const : 'future' as const;
-    if (status === 'future') return { label: day, sessions: [] as { start: number; end: number }[], status };
-
     const d = new Date();
     d.setDate(d.getDate() - (todayIdx - i));
     const dateStr = d.toISOString().slice(0, 10);
+    const dateLabel = `${d.getDate()} ${MONTH_ABBR[d.getMonth()]}`;
+
+    const apiSessions = (sessionApiData[day] ?? []).map((s) => ({
+      start: s.start,
+      end: s.end ?? nowHours,
+    }));
+
+    if (status === 'future') {
+      return { label: day, dateLabel, sessions: apiSessions, status };
+    }
 
     const stored = storedSessions
       .filter((s) => s.date === dateStr)
       .map((s) => ({ start: s.start, end: s.end ?? nowHours }));
 
-    return { label: day, sessions: stored.length > 0 ? stored : (MOCK_SESSIONS[day] ?? []), status };
+    return { label: day, dateLabel, sessions: apiSessions.length > 0 ? apiSessions : stored, status };
   });
+
+  const overviewRowData = overviewData.map(({ label, sessions, status, dateLabel }) => {
+    const totalHrs = sessions.reduce((s, seg) => s + (seg.end - seg.start), 0);
+    return { label, sessions, status, totalHrs, dateLabel };
+  });
+  const maxHrsOverview = Math.max(
+    ...overviewRowData.filter((r) => r.sessions.length > 0).map((r) => r.totalHrs),
+    1,
+  );
+  const longestDayLabel = overviewRowData.reduce<typeof overviewRowData[0] | null>((best, r) => {
+    if (r.sessions.length === 0 || r.status === 'future') return best;
+    return r.totalHrs > (best?.totalHrs ?? 0) ? r : best;
+  }, null)?.label;
 
   const healthCounts = axisValues.reduce(
     (acc, a) => {
@@ -580,7 +645,7 @@ export default function Analytics({ data, history, theme, isRobotOn }: Analytics
         ))}
       </div>
 
-      {/* ── Overview real-time (hero) ───────────────────────────────────────── */}
+      {/* ── Overview real-time ───────────────────────────────────────────────── */}
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
@@ -593,78 +658,110 @@ export default function Analytics({ data, history, theme, isRobotOn }: Analytics
           sub={t.analytics.overviewSub}
           isDark={isDark}
         />
-        <div className="space-y-3 pt-2">
-          <div className="relative ml-12 mr-4 h-4">
-            {[0, 6, 12, 18, 24].map((h) => (
-              <span
-                key={h}
-                className={`absolute text-[9px] font-mono -translate-x-1/2 ${isDark ? 'text-zinc-600' : 'text-zinc-400'}`}
-                style={{ left: `${(h / 24) * 100}%` }}
-              >
-                {`${String(h).padStart(2, '0')}:00`}
-              </span>
-            ))}
-          </div>
-          {overviewData.map(({ label, sessions, status }) => {
+
+        {/* column headers */}
+        <div
+          className={`grid items-center mb-1 text-[9px] font-semibold uppercase tracking-widest ${isDark ? 'text-zinc-600' : 'text-zinc-400'}`}
+          style={{ gridTemplateColumns: '64px 52px 64px 1fr 52px', gap: '0 12px' }}
+        >
+          <span>{t.analytics.colDateDay}</span>
+          <span>{t.analytics.colOpen}</span>
+          <span>{t.analytics.colClose}</span>
+          <span>{t.analytics.colActiveHours}</span>
+          <span className="text-right">{t.analytics.colHours}</span>
+        </div>
+
+        {/* rows */}
+        <div className="space-y-0.5">
+          {overviewRowData.map(({ label, sessions, status, totalHrs, dateLabel }) => {
             const isToday = status === 'today';
-            const isFuture = status === 'future';
-            const totalHrs = sessions.reduce((s, seg) => s + (seg.end - seg.start), 0);
-            const rightLabel = isFuture
-              ? '—'
-              : sessions.length === 0
-                ? 'OFF'
-                : isToday && isRobotOn
-                  ? `${fmtHour(sessions[0].start)} → NOW`
-                  : sessions.length === 1
-                    ? `${fmtHour(sessions[0].start)} – ${fmtHour(sessions[0].end)}`
-                    : `${Math.floor(totalHrs)}h ${Math.round((totalHrs % 1) * 60)}m`;
+            const isClosed = sessions.length === 0;
+            const isActive = isToday && isRobotOn;
+            const isLongest = label === longestDayLabel && !isActive;
+
+            const barColor = isClosed
+              ? 'transparent'
+              : isActive ? '#22c55e'
+              : isLongest ? '#dc2626'
+              : isDark ? '#52525b' : '#71717a';
+
+            const hoursColor = isActive ? '#22c55e'
+              : isLongest ? '#dc2626'
+              : isClosed ? (isDark ? '#52525b' : '#d1d5db')
+              : isDark ? '#a1a1aa' : '#52525b';
+
+            const openStr = isClosed ? '-' : fmtTimeDot(sessions[0].start);
+            const closeStr = isClosed ? '-'
+              : isActive ? t.analytics.now
+              : fmtTimeDot(sessions[sessions.length - 1].end);
+            const hoursStr = isClosed ? t.analytics.closedLabel : totalHrs.toFixed(1);
+            const barPct = isClosed ? 0 : (totalHrs / maxHrsOverview) * 100;
+
+            const dayColor = isActive
+              ? '#22c55e'
+              : isDark ? '#a1a1aa' : '#52525b';
 
             return (
-              <div key={label} className="flex items-center gap-3">
-                <span
-                  className={`w-10 text-right text-[10px] font-bold uppercase tracking-widest shrink-0 ${
-                    isToday ? 'text-red-600' : isFuture
-                      ? (isDark ? 'text-zinc-700' : 'text-zinc-300')
-                      : (isDark ? 'text-zinc-400' : 'text-zinc-500')
-                  }`}
-                >
-                  {label}
-                </span>
-                <div className={`relative flex-1 h-6 rounded overflow-hidden ${isDark ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
-                  {sessions.map((seg, idx) => (
-                    <div
-                      key={idx}
-                      className={`absolute top-0 h-full ${isToday ? 'bg-red-600' : (isDark ? 'bg-zinc-500' : 'bg-zinc-400')}`}
-                      style={{
-                        left: `${(seg.start / 24) * 100}%`,
-                        width: `${((seg.end - seg.start) / 24) * 100}%`,
-                      }}
-                    />
-                  ))}
-                  {isToday && (
-                    <div
-                      className="absolute top-0 h-full w-0.5 bg-white/60 z-10"
-                      style={{ left: `${(nowHours / 24) * 100}%` }}
-                    />
-                  )}
-                </div>
-                <div className="flex items-center gap-1 shrink-0 w-28">
+              <div
+                key={label}
+                className="grid items-center py-2"
+                style={{ gridTemplateColumns: '64px 52px 64px 1fr 52px', gap: '0 12px' }}
+              >
+                {/* DATE / DAY cell — two lines */}
+                <div className="flex flex-col leading-none gap-0.5">
                   <span
-                    className={`text-[10px] font-mono ${
-                      isToday ? 'text-red-500' : isFuture
-                        ? (isDark ? 'text-zinc-700' : 'text-zinc-300')
-                        : (isDark ? 'text-zinc-400' : 'text-zinc-500')
-                    }`}
+                    className="text-[10px] font-bold uppercase tracking-widest"
+                    style={{ color: dayColor }}
                   >
-                    {rightLabel}
+                    {label}
                   </span>
-                  {isToday && isRobotOn && (
-                    <span className="text-[9px] text-red-500 animate-pulse">●</span>
+                  <span className={`text-[9px] uppercase tracking-widest ${isDark ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                    {dateLabel}
+                  </span>
+                </div>
+
+                <span className={`text-[10px] font-mono ${isDark ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                  {openStr}
+                </span>
+
+                <span
+                  className="text-[10px] font-mono font-semibold"
+                  style={{ color: isActive ? '#22c55e' : isDark ? '#71717a' : '#71717a' }}
+                >
+                  {closeStr}
+                </span>
+
+                <div className={`relative h-5 rounded ${isDark ? 'bg-zinc-800' : 'bg-zinc-100'}`}>
+                  {barPct > 0 && (
+                    <div
+                      className="absolute left-0 top-0 h-full rounded"
+                      style={{ width: `${barPct}%`, background: barColor }}
+                    />
                   )}
                 </div>
+
+                <span className="text-[10px] font-mono font-semibold text-right" style={{ color: hoursColor }}>
+                  {hoursStr}
+                </span>
               </div>
             );
           })}
+        </div>
+
+        {/* legend */}
+        <div className={`flex items-center gap-5 mt-4 pt-3 border-t ${isDark ? 'border-zinc-800' : 'border-zinc-100'}`}>
+          {[
+            { label: t.analytics.legendActive, color: '#22c55e' },
+            { label: t.analytics.legendComplete, color: isDark ? '#52525b' : '#71717a' },
+            { label: t.analytics.legendLongest, color: '#dc2626' },
+          ].map(({ label, color }) => (
+            <div key={label} className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full shrink-0" style={{ background: color }} />
+              <span className={`text-[9px] font-semibold uppercase tracking-widest ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                {label}
+              </span>
+            </div>
+          ))}
         </div>
       </motion.div>
 

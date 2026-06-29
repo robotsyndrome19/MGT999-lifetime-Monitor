@@ -22,8 +22,7 @@ import {
   Shield,
   FileText,
   HelpCircle,
-  Menu,
-  Power
+  Menu
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RobotData, RobotAxisData, CylinderData, DataSnapshot } from './types';
@@ -58,7 +57,9 @@ const GRIPPER_MARKERS: Record<string, MarkerPosition> = {
   'Fork cylinder R': { x: 77.5, y: 26 },
 };
 
-// Mock data generator
+// Set to real API endpoint URL when available, e.g. 'https://your-api.com/robot/status'
+const ROBOT_API_URL = '';
+
 const generateMockData = (): RobotData => {
   const axes: { [key: string]: RobotAxisData } = {};
   for (let i = 1; i <= 6; i++) {
@@ -79,13 +80,23 @@ const generateMockData = (): RobotData => {
   };
 
   return {
-    robot_lifetime: {
-      runtime: 12450 + Math.random() * 10,
-    },
+    system_state: 'RUNNING - AUTO',
+    robot_lifetime: { runtime: 12450 + Math.random() * 10 },
     robot_axis: axes,
     gripper: cylinders,
   };
 };
+
+async function fetchRobotData(): Promise<RobotData> {
+  if (!ROBOT_API_URL) return generateMockData();
+  try {
+    const res = await fetch(ROBOT_API_URL);
+    if (!res.ok) throw new Error('fetch failed');
+    return res.json() as Promise<RobotData>;
+  } catch {
+    return generateMockData();
+  }
+}
 
 // Update this URL to point to the deployed Palletizer Monitor dashboard
 const PALLETIZER_URL = 'https://palletizer-mgt-dashboard-monitor.up.railway.app/';
@@ -176,7 +187,7 @@ export default function App() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [readNotificationIds, setReadNotificationIds] = useState<string[]>([]);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isRobotOn, setIsRobotOn] = useState(true);
+  const isRobotOn = true;
   const [activeAxis, setActiveAxis] = useState<string | null>(null);
   const [activeCylinder, setActiveCylinder] = useState<string | null>(null);
   const [analyticsHistory, setAnalyticsHistory] = useState<DataSnapshot[]>(() => [createSnapshot(INITIAL_DATA)]);
@@ -197,19 +208,22 @@ export default function App() {
   const toggleLang = () => setLang(prev => prev === 'en' ? 'th' : 'en');
 
   useEffect(() => {
-    console.log('App mounted, starting updates');
+    let alive = true;
 
-    const interval = setInterval(() => {
+    const tick = async () => {
+      const newData = await fetchRobotData();
+      if (!alive) return;
       setData(prev => {
-        if (!prev) return generateMockData();
-        const newData = generateMockData();
         newData.robot_lifetime.runtime = prev.robot_lifetime.runtime + 0.01;
         setLogs(prevLogs => [...buildDynamicLogs(prev, newData), ...prevLogs].slice(0, 10));
         setAnalyticsHistory(prevHistory => [...prevHistory, createSnapshot(newData)].slice(-60));
         return newData;
       });
-    }, 2000);
-    return () => clearInterval(interval);
+    };
+
+    tick();
+    const interval = setInterval(tick, 2000);
+    return () => { alive = false; clearInterval(interval); };
   }, []);
 
   return (
@@ -411,6 +425,14 @@ export default function App() {
                     </button>
                   </div>
 
+                  <div className={`p-4 rounded-xl mb-4 ${theme === 'dark' ? 'bg-zinc-800/50' : 'bg-zinc-50'}`}>
+                    <p className={`text-[10px] uppercase tracking-widest font-bold mb-2 ${theme === 'dark' ? 'text-zinc-500' : 'text-zinc-400'}`}>{t.nav.systemStatus}</p>
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      <span className={`text-xs font-mono ${theme === 'dark' ? 'text-zinc-300' : 'text-zinc-700'}`}>{t.nav.allNominal}</span>
+                    </div>
+                  </div>
+
                   <div className="space-y-2">
                     {(['overview', 'axes', 'gripper', 'analytics'] as const).map((tab) => (
                       <button
@@ -477,13 +499,6 @@ export default function App() {
                       {t.nav.goPalletizerFull}
                     </a>
 
-                    <div className={`p-4 rounded-xl ${theme === 'dark' ? 'bg-zinc-800/50' : 'bg-zinc-50'}`}>
-                      <p className={`text-[10px] uppercase tracking-widest font-bold mb-2 ${theme === 'dark' ? 'text-zinc-500' : 'text-zinc-400'}`}>{t.nav.systemStatus}</p>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                        <span className={`text-xs font-mono ${theme === 'dark' ? 'text-zinc-300' : 'text-zinc-700'}`}>{t.nav.allNominal}</span>
-                      </div>
-                    </div>
                   </div>
                 </div>
               </motion.div>
@@ -576,15 +591,6 @@ export default function App() {
                       theme === 'dark' ? 'bg-red-600' : 'bg-red-700'
                     }`}>
                       <span>{t.overview.statusRobot}</span>
-                      <button
-                        onClick={() => setIsRobotOn(prev => !prev)}
-                        className={`p-1.5 rounded-full transition-colors ${
-                          isRobotOn ? 'bg-white/20 hover:bg-white/30' : 'bg-white/10 hover:bg-white/20'
-                        }`}
-                        title={isRobotOn ? 'Turn Off' : 'Turn On'}
-                      >
-                        <Power className={`w-4 h-4 transition-opacity ${isRobotOn ? 'opacity-100' : 'opacity-50'}`} />
-                      </button>
                     </div>
                     <div className="p-6 flex-grow flex flex-col items-center justify-center gap-6">
                       <div className="w-full aspect-square relative flex items-center justify-center p-4">
@@ -600,11 +606,11 @@ export default function App() {
                       <div className={`w-full p-4 rounded-xl text-center ${theme === 'dark' ? 'bg-zinc-800/50' : 'bg-zinc-50'}`}>
                         <p className={`text-xs uppercase tracking-widest mb-1 ${theme === 'dark' ? 'text-zinc-500' : 'text-zinc-400'}`}>{t.overview.systemState}</p>
                         <p className={`font-mono font-bold ${
-                          isRobotOn
+                          data.system_state === 'RUNNING - AUTO'
                             ? (theme === 'dark' ? 'text-emerald-400' : 'text-emerald-600')
                             : (theme === 'dark' ? 'text-red-400' : 'text-red-600')
                         }`}>
-                          {isRobotOn ? t.overview.runningAuto : t.overview.stopped}
+                          {data.system_state}
                         </p>
                       </div>
                     </div>

@@ -115,6 +115,16 @@ const en = {
     summary: 'SUMMARY',
     status: 'status',
     openCyl: 'OPEN',
+    colDateDay: 'Date / Day',
+    colOpen: 'Open',
+    colClose: 'Close',
+    colActiveHours: 'Active Hours →',
+    colHours: 'Hours',
+    now: 'NOW',
+    closedLabel: 'CLOSE',
+    legendActive: 'Active',
+    legendComplete: 'Complete',
+    legendLongest: 'Longest Hours',
   },
 };
 
@@ -233,6 +243,16 @@ const th: Translations = {
     summary: 'สรุป',
     status: 'สถานะ',
     openCyl: 'เปิด',
+    colDateDay: 'วันที่ / วัน',
+    colOpen: 'เปิด',
+    colClose: 'ปิด',
+    colActiveHours: 'ชั่วโมงทำงาน →',
+    colHours: 'ชั่วโมง',
+    now: 'ตอนนี้',
+    closedLabel: 'ปิด',
+    legendActive: 'กำลังทำงาน',
+    legendComplete: 'เสร็จแล้ว',
+    legendLongest: 'ชั่วโมงมากสุด',
   },
 };
 

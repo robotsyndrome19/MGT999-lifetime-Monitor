@@ -12,6 +12,7 @@ export interface CylinderData {
 }
 
 export interface RobotData {
+  system_state: string;
   robot_lifetime: {
     runtime: number;
   };
